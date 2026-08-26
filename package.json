@@ -1,0 +1,78 @@
+{
+  "name": "@seanmozeik/supabash-fs",
+  "version": "0.1.0",
+  "description": "Authenticated Supabase Storage filesystem for Just Bash.",
+  "keywords": [
+    "deno",
+    "edge",
+    "filesystem",
+    "just-bash",
+    "supabase",
+    "virtual-filesystem"
+  ],
+  "license": "MIT",
+  "author": "Sean Lees",
+  "files": [
+    "dist",
+    "examples",
+    "LICENSE",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "audit:production": "bun audit --production",
+    "build": "bun run build:clean && bun run build:js && bun run build:types",
+    "build:clean": "bun ./scripts/clean-dist.ts",
+    "build:js": "bun build ./src/api/supabash.ts --outfile ./dist/index.js --target browser --format esm --packages external",
+    "build:smoke": "bun ./scripts/check-built-package.mjs",
+    "build:types": "tsc -p tsconfig.build.json",
+    "check:deno": "deno check --config deno.json tests/deno/live-supabase.ts",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run source:size",
+    "fix": "oxfmt --write . && oxlint --type-aware --type-check --deny-warnings --fix .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint --type-aware --type-check --deny-warnings .",
+    "package:check": "bun pm pack --dry-run",
+    "package:consumer": "bun ./scripts/check-packed-consumer.ts",
+    "prepack": "bun run build && bun run build:smoke",
+    "source:size": "bun ./scripts/check-source-size.ts",
+    "test": "vitest run --reporter=minimal",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.112.4"
+  },
+  "devDependencies": {
+    "@seanmozeik/de-clank": "0.1.7",
+    "@types/bun": "1.4.0",
+    "@types/node": "26.2.0",
+    "just-bash": "3.4.2",
+    "oxfmt": "0.64.0",
+    "oxlint": "1.79.0",
+    "oxlint-tsgolint": "7.0.2001",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  },
+  "peerDependencies": {
+    "just-bash": ">=3.4.2 <4"
+  },
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "packageManager": "bun@1.4.0"
+}
