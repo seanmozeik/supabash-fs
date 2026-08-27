@@ -1,9 +1,10 @@
+import { SupabashError } from '../api/errors.js';
 import type { PurgeOptions, PurgeReceipt } from '../api/history.js';
 import type { HistoryBlobStore } from './blob-store.js';
 import { readJson } from './json-io.js';
 import { HISTORY_ROOT, historyKey } from './keys.js';
 import { DEFAULT_MAX_REVISIONS_RETAINED } from './limits.js';
-import { parseCheckpoint, parseHead, parseRevision } from './parse.js';
+import { parseCheckpoint, parseComplete, parseHead, parseIntent, parseRevision } from './parse.js';
 import type { HeadRecord, RevisionRecord } from './records.js';
 
 export const purgeHistory = async (
@@ -11,6 +12,10 @@ export const purgeHistory = async (
   options: PurgeOptions,
 ): Promise<PurgeReceipt> => {
   const maxRevisions = options.maxRevisions ?? DEFAULT_MAX_REVISIONS_RETAINED;
+  assertPurgeLimit(maxRevisions, 'maxRevisions');
+  if (options.maxAgeMs !== undefined) {
+    assertPurgeLimit(options.maxAgeMs, 'maxAgeMs');
+  }
   const head = await readJson(history, historyKey.head, parseHead);
   const records = await loadRevisions(history);
   const pinned = await pinnedRevisions(history, head);
@@ -33,17 +38,55 @@ export const purgeHistory = async (
     const hash = key.slice(`${HISTORY_ROOT}/objects/`.length);
     return !retained.has(hash);
   });
-  const transactionKeys = removable.flatMap((record) => [
-    historyKey.intent(record.transactionId),
-    historyKey.complete(record.transactionId),
-    historyKey.revision(record.revision),
-  ]);
-  const objects = [...unusedObjects, ...transactionKeys];
+  const transactionKeys: string[] = [];
+  for (const record of removable) {
+    const complete = await readJson(
+      history,
+      historyKey.complete(record.transactionId),
+      parseComplete,
+    );
+    transactionKeys.push(
+      historyKey.intent(record.transactionId),
+      historyKey.complete(record.transactionId),
+      historyKey.revision(record.revision),
+    );
+    if (complete?.idempotencyKey !== undefined) {
+      transactionKeys.push(historyKey.idempotency(complete.idempotencyKey));
+    }
+  }
+  const aborted = await removableAbortedTransactions(history, cutoff);
+  const objects = [...new Set([...unusedObjects, ...transactionKeys, ...aborted])].toSorted();
   const bytes = await byteSize(history, objects);
   if (options.dryRun !== true && objects.length > 0) {
     await history.remove(objects);
   }
   return { bytes, dryRun: options.dryRun === true, objects };
+};
+
+const removableAbortedTransactions = async (
+  history: HistoryBlobStore,
+  cutoff: number | undefined,
+): Promise<readonly string[]> => {
+  if (cutoff === undefined) {
+    return [];
+  }
+  const listed = await history.list(`${HISTORY_ROOT}/transactions/`);
+  const aborted = new Set(
+    listed
+      .filter((key) => key.endsWith('/abort.json'))
+      .map((key) => key.slice(0, key.lastIndexOf('/'))),
+  );
+  const removable: string[] = [];
+  for (const key of listed.filter((entry) => entry.endsWith('/intent.json'))) {
+    const directory = key.slice(0, key.lastIndexOf('/'));
+    if (aborted.has(directory)) {
+      const intent = await readJson(history, key, parseIntent);
+      if (intent !== undefined && Date.parse(intent.createdAt) < cutoff) {
+        removable.push(key, historyKey.abort(intent.transactionId));
+      }
+    }
+  }
+  return removable;
 };
 
 const loadRevisions = async (history: HistoryBlobStore): Promise<RevisionRecord[]> => {
@@ -110,4 +153,10 @@ const byteSize = async (history: HistoryBlobStore, keys: readonly string[]): Pro
     total += body?.byteLength ?? 0;
   }
   return total;
+};
+
+const assertPurgeLimit = (value: number, name: string): void => {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new SupabashError('QUOTA_EXCEEDED', `${name} must be a non-negative safe integer.`);
+  }
 };

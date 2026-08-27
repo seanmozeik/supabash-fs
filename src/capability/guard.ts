@@ -5,6 +5,7 @@ import { SupabashError } from '../api/errors.js';
 import type {
   CheckpointOptions,
   CheckpointReceipt,
+  CheckpointRecord,
   HistoryPage,
   HistoryQuery,
   PurgeOptions,
@@ -52,12 +53,20 @@ class GuardedWorkspace implements Workspace {
     return this.allow('checkpoint', () => this.inner.checkpoint(options));
   }
 
+  checkpoints(): Promise<readonly CheckpointRecord[]> {
+    return this.allow('checkpoint', () => this.inner.checkpoints());
+  }
+
   commit(options: CommitOptions = {}): Promise<CommitReceipt> {
     return this.allow('commit', () =>
       this.inner.commit({
         context: { ...options.context, actor: this.actor, correlationId: this.correlationId },
       }),
     );
+  }
+
+  deleteCheckpoint(checkpointId: string): Promise<void> {
+    return this.allow('checkpoint', () => this.inner.deleteCheckpoint(checkpointId));
   }
 
   discard(): Promise<void> {

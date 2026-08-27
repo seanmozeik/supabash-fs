@@ -10,7 +10,7 @@ import { MemoryStorage } from '../support/memory-storage.ts';
 describe('workspace publish faults', () => {
   test('fails with COMMIT_COORDINATION when the lease is lost before publish', async () => {
     const workspace = await createStorageWorkspace(new MemoryStorage(), {
-      coordinator: new CountLeaseCoordinator(1),
+      coordinator: new CountLeaseCoordinator(1, 2),
     });
     await workspace.fs.writeFile('/notes.md', 'alpha\n');
     await expect(workspace.commit()).rejects.toMatchObject({ code: 'COMMIT_COORDINATION' });
@@ -48,19 +48,24 @@ describe('workspace publish faults', () => {
 });
 
 class CountLeaseCoordinator implements CommitCoordinator {
+  private acquisitions = 0;
   private readonly loseOn: number;
+  private readonly loseOnAcquisition: number;
 
-  constructor(loseOn: number) {
+  constructor(loseOn: number, loseOnAcquisition: number) {
     this.loseOn = loseOn;
+    this.loseOnAcquisition = loseOnAcquisition;
   }
 
   acquire(): Promise<CommitLease> {
+    this.acquisitions += 1;
     let calls = 0;
     const { loseOn } = this;
+    const shouldLose = this.acquisitions === this.loseOnAcquisition;
     return Promise.resolve({
       lost: () => {
         calls += 1;
-        return Promise.resolve(calls >= loseOn);
+        return Promise.resolve(shouldLose && calls >= loseOn);
       },
       release: () => Promise.resolve(),
     });

@@ -3,6 +3,7 @@ import type { CommitCoordinator } from './commit.js';
 
 export const CAPABILITY_SCHEMA_VERSION = 1;
 export const DEFAULT_CLOCK_SKEW_SECONDS = 60;
+export const DEFAULT_MAX_CAPABILITY_LIFETIME_SECONDS = 900;
 
 export type DelegatedOperation =
   | 'checkpoint'
@@ -42,6 +43,7 @@ export interface DelegatedVerifier {
   readonly audience: string;
   readonly clockSkewSeconds?: number;
   readonly issuer: string;
+  readonly maxLifetimeSeconds?: number;
   readonly nonceStore?: CapabilityNonceStore;
   readonly origin: string;
   readonly publicKeys: Readonly<Record<string, CryptoKey>>;

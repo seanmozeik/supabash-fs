@@ -87,7 +87,7 @@ const requiredString = (record: Record<string, unknown>, key: string): string =>
 
 const requiredNumber = (record: Record<string, unknown>, key: string): number => {
   const value = record[key];
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
     throw invalid(`Capability is missing '${key}'.`);
   }
   return value;

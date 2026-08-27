@@ -55,3 +55,20 @@ export const requiredNumber = (record: Record<string, unknown>, key: string): nu
   }
   return value;
 };
+
+export const optionalNumber = (
+  record: Record<string, unknown>,
+  key: string,
+): number | undefined => {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new SupabashError(
+      'HISTORY_CORRUPTION',
+      `History record field '${key}' must be a number.`,
+    );
+  }
+  return value;
+};

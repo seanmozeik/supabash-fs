@@ -27,7 +27,7 @@ describe('workspace commit recovery', () => {
       changes: receipt.changes.map(({ kind, path }) => ({ kind, path })),
       kept: inner.text('/keep.md'),
       removed: inner.text('/remove.md'),
-      uploads: storage.uploads,
+      uploadPaths: [...new Set(storage.uploads)].toSorted(),
     }).toStrictEqual({
       changes: [
         { kind: 'upsert', path: '/keep.md' },
@@ -35,7 +35,7 @@ describe('workspace commit recovery', () => {
       ],
       kept: 'new value\n',
       removed: undefined,
-      uploads: ['/keep.md', '/keep.md'],
+      uploadPaths: ['/keep.md', '/remove.md'],
     });
   });
 

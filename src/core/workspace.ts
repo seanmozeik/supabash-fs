@@ -1,9 +1,9 @@
-import type { CommitContext, CommitCoordinator, CommitOptions } from '../api/commit.js';
+import type { CommitCoordinator, CommitOptions } from '../api/commit.js';
 import type { CommitReceipt, Workspace, WorkspaceChange } from '../api/contracts.js';
-import { SupabashError } from '../api/errors.js';
 import type {
   CheckpointOptions,
   CheckpointReceipt,
+  CheckpointRecord,
   HistoryPage,
   HistoryQuery,
   PurgeOptions,
@@ -14,12 +14,14 @@ import type {
   RevisionDiffInput,
   RevisionEntry,
 } from '../api/history.js';
-import { createCheckpoint } from '../history/checkpoint.js';
+import { createCheckpoint, listCheckpoints, removeCheckpoint } from '../history/checkpoint.js';
 import { diffRevisions } from '../history/diff.js';
+import { commitFingerprint } from '../history/fingerprint.js';
 import type { WorkspaceLimits } from '../history/limits.js';
 import {
   existingIdempotentReceipt,
   finalizePublish,
+  receiptForTransaction,
   withLease,
   writeIntent,
 } from '../history/publish.js';
@@ -27,15 +29,26 @@ import { purgeHistory } from '../history/purge.js';
 import { readHistoryPage } from '../history/query.js';
 import { assertCommitQuotas } from '../history/quota.js';
 import { readRevisionView } from '../history/readonly.js';
-import { recoverPublishedHead } from '../history/recover.js';
+import { recoverWorkspace } from '../history/recover.js';
 import { planRestore } from '../history/restore.js';
 import { overlayByPath } from '../history/snapshot.js';
 import { mapInBatches } from './batches.js';
-import { contentTypeForPath } from './content-type.js';
-import { comparePaths } from './entry-order.js';
-import { sha256 } from './hash.js';
-import type { RemoteEntry, ScopedStorage, UploadDraft, UploadEntry } from './storage.js';
+import type { PendingChanges, RemoteEntry, ScopedStorage, UploadEntry } from './storage.js';
 import { TrackedFileSystem } from './tracked-file-system.js';
+import {
+  asSupabashError,
+  committedWorkspaceChanges,
+  conflictError,
+  mergeAuditBaseline,
+  partialCommitError,
+  prepareUpload,
+  previewWorkspaceChanges,
+  remoteAsRevision,
+  resolvedCommitContext,
+  sameRemoteVersion,
+  visibleEntryCount,
+} from './workspace-changes.js';
+import { validateWorkspaceConfiguration } from './workspace-options.js';
 
 export interface StorageWorkspaceOptions {
   readonly coordinator?: CommitCoordinator;
@@ -49,7 +62,10 @@ export const createStorageWorkspace = async (
   storage: ScopedStorage,
   options: StorageWorkspaceOptions = {},
 ): Promise<Workspace> => {
-  await recoverPublishedHead(storage.history);
+  validateWorkspaceConfiguration(options);
+  await withLease(options.coordinator, options.scope ?? 'local', crypto.randomUUID(), () =>
+    recoverWorkspace(storage),
+  );
   const filesystem = await TrackedFileSystem.create(
     await storage.list(),
     (entry) => storage.download(entry),
@@ -65,6 +81,8 @@ class StorageWorkspace implements Workspace {
   private readonly scope: string;
   private readonly storage: ScopedStorage;
   private readonly uploadConcurrency: number;
+  private partialTransactionId: string | undefined;
+  private restoreSourceRevision: string | undefined;
 
   constructor(
     storage: ScopedStorage,
@@ -72,9 +90,6 @@ class StorageWorkspace implements Workspace {
     options: StorageWorkspaceOptions,
   ) {
     const uploadConcurrency = options.uploadConcurrency ?? 4;
-    if (!Number.isSafeInteger(uploadConcurrency) || uploadConcurrency < 1) {
-      throw new RangeError('uploadConcurrency must be a positive integer.');
-    }
     this.storage = storage;
     this.fs = filesystem;
     this.uploadConcurrency = uploadConcurrency;
@@ -84,49 +99,76 @@ class StorageWorkspace implements Workspace {
   }
 
   changes(): readonly WorkspaceChange[] {
-    const pending = this.fs.pendingPreview();
-    return [
-      ...pending.deletions.map(changeForDelete),
-      ...pending.upserts.map((path) => ({
-        entryKind: this.fs.kindOf(path),
-        kind: 'upsert' as const,
-        path,
-      })),
-    ].toSorted((left, right) => comparePaths(left.path, right.path));
+    return previewWorkspaceChanges(this.fs.pendingPreview(), (path) => this.fs.kindOf(path));
   }
 
   checkpoint(options: CheckpointOptions = {}): Promise<CheckpointReceipt> {
     return createCheckpoint(this.storage.history, options);
   }
 
+  checkpoints(): Promise<readonly CheckpointRecord[]> {
+    return listCheckpoints(this.storage.history);
+  }
+
   async commit(options: CommitOptions = {}): Promise<CommitReceipt> {
-    const context = commitContext(options.context);
-    const replay = await existingIdempotentReceipt(this.storage.history, context, this.scope);
-    if (replay !== undefined) {
-      return replay;
-    }
+    const context = resolvedCommitContext(options.context, this.restoreSourceRevision);
     const pending = this.fs.beginCommit();
     const publish = { intentWritten: false };
+    const transactionId = crypto.randomUUID();
     try {
       const uploads = await mapInBatches(pending.upserts, this.uploadConcurrency, async (path) =>
         prepareUpload(await this.fs.uploadEntry(path)),
       );
-      assertCommitQuotas(
-        uploads,
-        pending.deletions,
-        visibleCount(this.fs.baselineEntries(), pending.deletions, uploads),
-        context.metadata,
-        this.limits,
-      );
-      await this.assertNoConflicts(pending.deletions, uploads);
-      const transactionId = crypto.randomUUID();
+      const auditBaseline = await this.auditBaseline(pending);
+      const plannedChanges = this.changesFrom(pending, uploads, auditBaseline);
+      const fingerprint = await commitFingerprint(plannedChanges, context);
       const revision = crypto.randomUUID();
       return await withLease(this.coordinator, this.scope, transactionId, async (lost) => {
-        const publishInput = {
-          baseline: this.fs.baselineEntries(),
-          changes: this.changesFrom(pending, uploads),
+        let publishChanges = pending;
+        if (await recoverWorkspace(this.storage)) {
+          this.fs.refreshBaseline(await this.storage.list());
+          publishChanges = this.fs.pendingPreview();
+        }
+        const prior =
+          this.partialTransactionId === undefined
+            ? undefined
+            : await receiptForTransaction(
+                this.storage.history,
+                this.partialTransactionId,
+                this.scope,
+                fingerprint,
+              );
+        if (prior !== undefined) {
+          await this.finishPublishedCommit();
+          return prior;
+        }
+        const replay = await existingIdempotentReceipt(
+          this.storage.history,
           context,
-          deletions: pending.deletions,
+          this.scope,
+          fingerprint,
+        );
+        if (replay !== undefined) {
+          await this.finishPublishedCommit();
+          return replay;
+        }
+        await this.assertNoConflicts(publishChanges.deletions, uploads);
+        const baseline = await this.storage.list();
+        const changeBaseline = mergeAuditBaseline(baseline, auditBaseline);
+        const changes = this.changesFrom(publishChanges, uploads, changeBaseline);
+        assertCommitQuotas(
+          uploads,
+          publishChanges.deletions,
+          visibleEntryCount(baseline, publishChanges.deletions, uploads),
+          context.metadata,
+          this.limits,
+        );
+        const publishInput = {
+          baseline,
+          changes,
+          context,
+          deletions: publishChanges.deletions,
+          fingerprint,
           history: this.storage.history,
           scope: this.scope,
           storage: this.storage,
@@ -136,19 +178,43 @@ class StorageWorkspace implements Workspace {
         const uploaded = await mapInBatches(uploads, this.uploadConcurrency, (entry) =>
           this.storage.upload(entry),
         );
-        await this.storage.delete(pending.deletions);
-        const receipt = await finalizePublish({ ...publishInput, uploads: uploaded }, intent, lost);
-        this.fs.finishCommit(uploaded);
+        await this.storage.delete(publishChanges.deletions);
+        const receipt = await finalizePublish(
+          {
+            ...publishInput,
+            changes: this.changesFrom(publishChanges, uploaded, changeBaseline),
+            uploads: uploaded,
+          },
+          intent,
+          lost,
+        );
+        await this.finishPublishedCommit();
         return receipt;
       });
     } catch (error) {
+      if (publish.intentWritten) {
+        this.partialTransactionId = transactionId;
+      }
       this.fs.failCommit();
-      throw publish.intentWritten ? partial(error) : asSupabashError(error);
+      throw publish.intentWritten ? partialCommitError(error) : asSupabashError(error);
     }
   }
 
-  discard(): Promise<void> {
-    return this.fs.discardChanges();
+  deleteCheckpoint(checkpointId: string): Promise<void> {
+    return removeCheckpoint(this.storage.history, checkpointId);
+  }
+
+  async discard(): Promise<void> {
+    if (this.partialTransactionId === undefined) {
+      await this.fs.discardChanges();
+    } else {
+      await withLease(this.coordinator, this.scope, this.partialTransactionId, () =>
+        recoverWorkspace(this.storage),
+      );
+      await this.fs.finishCommit(await this.storage.list());
+      this.partialTransactionId = undefined;
+    }
+    this.restoreSourceRevision = undefined;
   }
 
   async diff(input: RevisionDiffInput): Promise<RevisionDiff> {
@@ -172,21 +238,26 @@ class StorageWorkspace implements Workspace {
     return readRevisionView(this.storage.history, revision);
   }
 
-  restore(revision: string): Promise<RestorePlan> {
-    return planRestore(this.storage.history, this.fs, revision);
+  async restore(revision: string): Promise<RestorePlan> {
+    const plan = await planRestore(this.storage.history, this.fs, revision);
+    this.restoreSourceRevision = plan.sourceRevision;
+    return plan;
   }
 
   private changesFrom(
-    pending: { deletions: readonly RemoteEntry[]; upserts: readonly string[] },
-    uploads: readonly UploadEntry[],
+    pending: PendingChanges,
+    uploads: readonly (RemoteEntry | UploadEntry)[],
+    baseline: readonly RemoteEntry[],
   ): readonly WorkspaceChange[] {
-    const uploaded = new Map(uploads.map((entry) => [entry.path, entry]));
-    return [
-      ...pending.deletions.map(changeForDelete),
-      ...pending.upserts.map((path) =>
-        changeForUpload(uploaded.get(path) ?? this.fs.baselineEntry(path)),
-      ),
-    ].toSorted((left, right) => comparePaths(left.path, right.path));
+    return committedWorkspaceChanges(pending, uploads, baseline, (path) =>
+      this.fs.baselineEntry(path),
+    );
+  }
+
+  private async finishPublishedCommit(): Promise<void> {
+    await this.fs.finishCommit(await this.storage.list());
+    this.partialTransactionId = undefined;
+    this.restoreSourceRevision = undefined;
   }
 
   private async stagedEntries(): Promise<readonly RevisionEntry[]> {
@@ -210,6 +281,22 @@ class StorageWorkspace implements Workspace {
     );
   }
 
+  private async auditBaseline(pending: PendingChanges): Promise<readonly RemoteEntry[]> {
+    const touched = new Set([
+      ...pending.deletions.map((entry) => entry.path),
+      ...pending.moves.map((move) => move.from),
+      ...pending.upserts,
+    ]);
+    const baseline = new Map(this.fs.baselineEntries().map((entry) => [entry.path, entry]));
+    for (const path of touched) {
+      const entry = await this.fs.baselineEntryForAudit(path);
+      if (entry !== undefined) {
+        baseline.set(path, entry);
+      }
+    }
+    return [...baseline.values()];
+  }
+
   private async assertNoConflicts(
     deletions: readonly RemoteEntry[],
     uploads: readonly UploadEntry[],
@@ -217,7 +304,7 @@ class StorageWorkspace implements Workspace {
     await mapInBatches(deletions, this.uploadConcurrency, async (entry) => {
       const current = await this.storage.head(entry.path);
       if (current !== undefined && !sameRemoteVersion(entry, current)) {
-        throw conflict(entry.path);
+        throw conflictError(entry.path);
       }
     });
     await mapInBatches(uploads, this.uploadConcurrency, async (upload) => {
@@ -229,120 +316,8 @@ class StorageWorkspace implements Workspace {
           ? current !== undefined
           : current === undefined || !sameRemoteVersion(baseline, current);
       if (!uploadAlreadyApplied && storageChanged) {
-        throw conflict(upload.path);
+        throw conflictError(upload.path);
       }
     });
   }
 }
-
-const prepareUpload = async (entry: UploadDraft): Promise<UploadEntry> => {
-  const contentHash = await contentHashFor(entry);
-  const versionHash = await sha256(
-    new TextEncoder().encode(
-      JSON.stringify({
-        contentHash,
-        kind: entry.kind,
-        mode: entry.mode,
-        modifiedAt: entry.modifiedAt.toISOString(),
-        target: entry.target,
-      }),
-    ),
-  );
-  return {
-    ...entry,
-    contentHash,
-    contentType: entry.contentType ?? contentTypeForPath(entry.path),
-    versionHash,
-  };
-};
-
-const contentHashFor = (entry: UploadDraft): Promise<string> => {
-  if (entry.body !== undefined) {
-    return sha256(entry.body);
-  }
-  return sha256(new TextEncoder().encode(entry.target ?? ''));
-};
-
-const visibleCount = (
-  baseline: readonly RemoteEntry[],
-  deletions: readonly RemoteEntry[],
-  uploads: readonly UploadEntry[],
-): number => {
-  const deleted = new Set(deletions.map((entry) => entry.path));
-  const visible = new Set(baseline.map((entry) => entry.path).filter((path) => !deleted.has(path)));
-  for (const upload of uploads) {
-    visible.add(upload.path);
-  }
-  return visible.size;
-};
-
-const sameRemoteVersion = (baseline: RemoteEntry, current: RemoteEntry): boolean => {
-  if (baseline.etag !== undefined || current.etag !== undefined) {
-    return baseline.etag === current.etag;
-  }
-  if (baseline.versionHash !== undefined || current.versionHash !== undefined) {
-    return baseline.versionHash === current.versionHash;
-  }
-  return (
-    baseline.size === current.size && baseline.modifiedAt.getTime() === current.modifiedAt.getTime()
-  );
-};
-
-const changeForDelete = (entry: RemoteEntry): WorkspaceChange => ({
-  entryKind: entry.kind,
-  kind: 'delete',
-  path: entry.path,
-  ...(entry.contentHash !== undefined && {
-    beforeHash: entry.contentHash,
-    contentHash: entry.contentHash,
-  }),
-  ...(entry.etag !== undefined && { etag: entry.etag }),
-  beforeSize: entry.size,
-});
-
-const changeForUpload = (entry: RemoteEntry | UploadEntry | undefined): WorkspaceChange => {
-  if (entry === undefined) {
-    throw new SupabashError('STORAGE', 'Upload is missing from the commit set.');
-  }
-  const etag = 'etag' in entry ? entry.etag : undefined;
-  const afterSize = 'size' in entry ? entry.size : entry.body?.byteLength;
-  return {
-    entryKind: entry.kind,
-    kind: 'upsert',
-    path: entry.path,
-    ...(entry.contentHash !== undefined && {
-      afterHash: entry.contentHash,
-      contentHash: entry.contentHash,
-    }),
-    ...(etag !== undefined && { etag }),
-    ...(afterSize !== undefined && { afterSize }),
-  };
-};
-
-const remoteAsRevision = (entry: RemoteEntry): RevisionEntry => ({
-  entryKind: entry.kind,
-  mode: entry.mode,
-  path: entry.path,
-  size: entry.size,
-  ...(entry.contentHash !== undefined && { contentHash: entry.contentHash }),
-  ...(entry.etag !== undefined && { etag: entry.etag }),
-  ...(entry.target !== undefined && { target: entry.target }),
-});
-
-const commitContext = (context: CommitContext | undefined): CommitContext =>
-  context ?? { actor: 'workspace', correlationId: crypto.randomUUID() };
-
-const conflict = (path: string): SupabashError =>
-  new SupabashError('COMMIT_CONFLICT', 'Stored entry changed after the workspace opened.', {
-    path,
-  });
-
-const partial = (error: unknown): SupabashError =>
-  new SupabashError('PARTIAL_COMMIT', 'Commit did not finish publishing a complete revision.', {
-    cause: asSupabashError(error),
-  });
-
-const asSupabashError = (error: unknown): SupabashError =>
-  error instanceof SupabashError
-    ? error
-    : new SupabashError('STORAGE', 'Workspace storage operation failed.', { cause: error });

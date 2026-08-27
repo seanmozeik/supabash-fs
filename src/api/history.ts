@@ -1,4 +1,5 @@
 import type { WorkspaceChange, WorkspaceEntryKind } from './contracts.js';
+import type { JsonValue } from './json.js';
 
 export interface CheckpointOptions {
   readonly idempotencyKey?: string;
@@ -10,6 +11,12 @@ export interface CheckpointReceipt {
   readonly checkpointId: string;
   readonly createdAt: Date;
   readonly revision: string;
+}
+
+export interface CheckpointRecord extends CheckpointReceipt {
+  readonly idempotencyKey?: string;
+  readonly label?: string;
+  readonly retentionClass?: string;
 }
 
 export interface HistoryQuery {
@@ -24,6 +31,8 @@ export interface HistoryRecord {
   readonly committedAt: Date;
   readonly correlationId: string;
   readonly cursor: string;
+  readonly idempotencyKey?: string;
+  readonly metadata?: Readonly<Record<string, JsonValue>>;
   readonly parentRevision: string | null;
   readonly revision: string;
   readonly schemaVersion: number;
@@ -62,6 +71,8 @@ export interface RevisionDiffEntry {
   readonly afterHash?: string;
   readonly beforeHash?: string;
   readonly kind: RevisionDiffKind;
+  readonly moveFrom?: string;
+  readonly moveTo?: string;
   readonly path: string;
   readonly preview?: string;
 }

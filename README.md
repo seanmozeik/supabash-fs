@@ -24,8 +24,9 @@ One opened `Workspace` is the unit of work:
    image inspection all use this same staged tree.
 4. `commit` publishes staged edits, writes content-addressed history under
    `.supabash/`, and returns an immutable transaction receipt.
-5. `checkpoint`, `history`, `diff`, `readRevision`, `restore`, and `purge` are
-   host APIs. They are not model tools.
+5. `checkpoint`, `checkpoints`, `deleteCheckpoint`, `history`, `diff`,
+   `readRevision`, `restore`, and `purge` are host APIs. They are not model
+   tools.
 
 Authorization is not command-string filtering. The real boundaries are the
 virtual filesystem, canonical path checks, the verified user or capability,
@@ -54,6 +55,12 @@ import { Bash } from 'npm:just-bash/browser';
 When `deno run` uses a restricted environment allow-list, also allow reads of
 `__MINIMATCH_TESTING_PLATFORM__`. Just Bash's pattern-matching dependency reads
 that name during import. The variable does not need a value.
+
+The optional AI SDK export loads its supported provider package. Under a
+restricted Deno permission set, that dependency also needs read access to its
+installed npm files, environment access for `OPENAI_API_KEY` and
+`OPENAI_BASE_URL`, and system-information access. The package's clean-consumer
+gate type-checks and runs both exports from the packed tarball under Deno 2.
 
 ## Configure Supabase
 
@@ -174,30 +181,41 @@ Apply Patch never calls `commit`. Bash never calls `commit`.
 
 ```ts
 import { createTools } from '@seanmozeik/supabash-fs/ai-sdk';
+import { generateText } from 'ai';
 
-const tools = await createTools({
+const bound = await createTools({
   workspace,
   bash: { policyOptions: { allowNetwork: false } },
   applyPatch: true,
   viewImage: { enabled: false },
 });
+
+const result = await generateText({ model, tools: bound.tools, prompt });
+
+bound.workspace === workspace; // true
 ```
 
 The factory binds tools to an already-open workspace. It does not open a
 second filesystem and does not commit after a tool call. Tool descriptions
 state that the root is already scoped. The model cannot select a bucket, user,
-prefix, access token, or storage client.
+prefix, access token, or storage client. The return value keeps the host
+workspace beside the AI SDK `ToolSet`; the workspace is never inserted into
+the agent-facing tool map.
 
 Optional `view_image` reads only from `workspace.fs`, allowlists image MIME
 types, enforces a byte limit before decoding, and rejects symbolic-link
-escapes. It is loaded only when `viewImage.enabled` is true.
+escapes. Its model output is an AI SDK file-content part with the detected MIME
+type and filename. The production build keeps this implementation in a
+separate chunk and loads it only when `viewImage.enabled` is true.
 
 Tool text is truncated with a stable `\n[truncated]\n` marker. Errors and
 outputs redact bearer tokens, signed URLs, and secret-looking keys.
 
 `bash-tool` does not expose a typed preflight hook, so the AI SDK adapter
 wraps `execute` and inspects the command first. That is a damage limiter, not
-an authorization boundary.
+an authorization boundary. Just Bash also receives a 30-second wall-clock
+deadline by default. Set `bash.limits.maxExecutionTimeMs` to a positive safe
+integer to change it.
 
 This package does not compact model context. Context management belongs to the
 AI runtime.
@@ -235,7 +253,11 @@ Do not treat command-string filtering as the security boundary.
 
 ```ts
 const staged = workspace.changes();
-const marker = await workspace.checkpoint({ label: 'safe' });
+const marker = await workspace.checkpoint({
+  idempotencyKey: 'safe-before-job-1',
+  label: 'safe',
+  retentionClass: 'short-lived',
+});
 const receipt = await workspace.commit({
   context: { actor: 'host', correlationId: 'job-1', idempotencyKey: 'job-1' },
 });
@@ -246,19 +268,17 @@ const diff = await workspace.diff({
 });
 const previous = await workspace.readRevision(marker.revision);
 const plan = await workspace.restore(marker.revision);
-await workspace.commit({
-  context: {
-    actor: 'host',
-    correlationId: 'restore-1',
-    metadata: { sourceRevision: plan.sourceRevision },
-  },
-});
+await workspace.commit({ context: { actor: 'host', correlationId: 'restore-1' } });
+const checkpoints = await workspace.checkpoints();
+await workspace.deleteCheckpoint(marker.checkpointId);
 await workspace.purge({ dryRun: true, maxRevisions: 50 });
 ```
 
 - `changes` returns the current staged set without a durable write.
 - `checkpoint` names the current complete revision. It does not publish staged
-  edits.
+  edits. Its idempotency key returns the same marker on retry.
+- `checkpoints` lists pinned markers with their labels and retention classes.
+  `deleteCheckpoint` releases a marker so retention can remove its revision.
 - `commit` publishes staged changes and returns an immutable receipt.
 - `discard` drops uncommitted changes only.
 - `history` reads committed transactions with cursor pagination. An unknown
@@ -268,7 +288,8 @@ await workspace.purge({ dryRun: true, maxRevisions: 50 });
   `previewBytes` (default 8_192). Pass `previewBytes: 0` to skip bodies.
 - `readRevision` returns a read-only historical view.
 - `restore` rebuilds the live tree the same way `open` and `discard` do, then
-  stages the difference against the current baseline. It does not commit.
+  stages the difference against the current baseline. It does not commit. The
+  next successful commit records `metadata.sourceRevision` automatically.
 - `purge` never makes a retained revision unreadable and can dry-run.
 
 Visible files stay in their filesystem paths. History lives under a private
@@ -283,16 +304,19 @@ delete:
     revisions/<revision>.json
     transactions/<transaction>/intent.json
     transactions/<transaction>/complete.json
+    transactions/<transaction>/abort.json
     checkpoints/<checkpoint>.json
+    idempotency/<key>.json
     head.json
 ```
 
 The path parser reserves `.supabash` and `.supabash-directory`. Storage
 listings filter the private namespace before constructing filesystem entries.
 
-A retry with the same idempotency key does not create a second logical
-transaction. Restore creates a new forward transaction when the host commits
-it. It never rewrites earlier history.
+A retry with the same idempotency key and the same operation returns the first
+receipt. Reusing that key for different changes or context fails with
+`IDEMPOTENCY_CONFLICT`. Restore creates a new forward transaction when the host
+commits it. It never rewrites earlier history.
 
 ## Storage consistency
 
@@ -303,22 +327,32 @@ revision publish.
 The write sequence is:
 
 1. freeze staged mutation and hash uploads
-2. conflict-check changed paths
-3. write an intent record
-4. upload visible objects and delete removed paths
-5. write content-addressed bodies, the revision manifest, and complete.json
-6. update `head.json` last
+2. acquire the optional per-scope commit lease
+3. recover any earlier interrupted transaction
+4. run the final conflict and quota checks
+5. write an intent record and initial recovery snapshot when needed
+6. upload visible objects and delete removed paths
+7. write content-addressed bodies, the revision manifest, and `complete.json`
+8. write the idempotency receipt and update `head.json` last
 
-A network failure can stop the sequence after some uploads. The last complete
-revision remains readable through `readRevision`. Retry `commit()` on the same
-workspace after a transient failure. Opening a workspace fast-forwards
-`head.json` when a later `complete.json` already exists; that does not make
-Storage publish atomic. A lost optional commit lease fails with
-`COMMIT_COORDINATION` before a complete revision is published.
+A network failure can stop the sequence after some uploads. An intent without
+a complete record is rolled back to the current head, or to its captured
+initial snapshot when no head exists, before the next workspace opens. Recovery
+writes an abort marker only after that rollback succeeds. A complete record
+whose final head write failed is adopted instead. Retry `commit()` on the same
+workspace after a transient failure; the transaction fingerprint and optional
+idempotency key prevent a second logical commit. The last published revision
+also remains readable through `readRevision` throughout recovery. A lost
+optional lease fails with `COMMIT_COORDINATION` before a complete revision is
+published. When a coordinator is present, workspace open and partial-discard
+recovery acquire the same per-scope lease before they inspect an unresolved
+intent.
 
 When no coordinator is supplied, a check-to-write race remains. Another writer
 can change an object between conflict preflight and upload. Applications that
-need strict per-scope serialization should supply a `CommitCoordinator`:
+need strict per-scope serialization should supply a `CommitCoordinator`.
+Without that coordinator, an opener can also race an active publisher while it
+decides whether an incomplete intent needs recovery.
 
 ```ts
 interface CommitCoordinator {
@@ -339,8 +373,11 @@ vector, or graph indexes. Those indexes are not an authority and are not
 implemented here.
 
 Each receipt includes logical revision, parent revision, transaction ID, opaque
-scope digest, changed paths, change kinds, content hashes, entry kinds,
-committed time, actor, cause, correlation ID, schema version, and `cursor`.
+scope digest, changed paths, change kinds, before and after hashes, ETags and
+sizes when available, move relationships, entry kinds, committed time, actor,
+cause, correlation ID, idempotency key, metadata, schema version, and `cursor`.
+History follows the published parent chain, so commits with equal timestamps
+still have one causal order. A page cursor names the last transaction returned.
 
 An indexer should:
 
@@ -409,7 +446,10 @@ allowed operations, issued-at, expiry, nonce, correlation ID, and schema
 version. Verification rejects expired tokens, future issued-at times outside
 clock skew, the wrong issuer or audience, the wrong project, bucket, or
 prefix, a changed subject, and an invalid signature. A host nonce store
-prevents replay.
+prevents replay. The default maximum capability lifetime is 900 seconds. The
+nonce is consumed only after signature, scope, bucket, origin, and workspace
+open checks succeed, so a transient Storage failure does not destroy a valid
+retry.
 
 Storage RLS alone may not express this server-side delegation. After the
 capability verifies, the package uses a trusted Supabase client clamped to the
@@ -455,36 +495,42 @@ Documented defaults:
 | `maxPatchSize`                | 1_048_576  |
 | `maxCommandLength`            | 32_768     |
 | `maxBashOutput`               | 262_144    |
+| `maxExecutionTimeMs`          | 30_000     |
+| `viewImage.maxBytes`          | 5_242_880  |
 | `maxHistoryPageSize`          | 100        |
 | `maxDiffPreviewBytes`         | 8_192      |
 | `maxTransactionMetadataBytes` | 16_384     |
 | `maxRevisions` purge hint     | 50         |
 | `uploadConcurrency`           | 4          |
 
-Limits fail before a durable mutation when possible and return a typed error.
+`maxFileSystemBytes` uses Just Bash's 1,073,741,824-byte in-memory default when
+it is omitted. Configured limits must be safe integers in their documented
+range. Invalid values and runtime quota failures use `QUOTA_EXCEEDED`. Limits
+fail before a durable mutation when possible.
 
 ## Errors
 
 All package errors are `SupabashError` values:
 
-| Code                  | Meaning                                                      |
-| --------------------- | ------------------------------------------------------------ |
-| `AUTHENTICATION`      | The bearer token is missing, malformed, or not verified.     |
-| `AUTHORIZATION`       | A key, verified identity, bucket, or root is unsafe.         |
-| `COMMIT_CONFLICT`     | A changed remote entry no longer matches the opened version. |
-| `COMMIT_COORDINATION` | The optional commit lease was lost.                          |
-| `COMMIT_IN_PROGRESS`  | Code tried to mutate or commit an active commit.             |
-| `EXPIRED_CAPABILITY`  | The delegated capability has expired.                        |
-| `HISTORY_CORRUPTION`  | A history record could not be parsed.                        |
-| `INVALID_CAPABILITY`  | The delegated capability is not acceptable.                  |
-| `INVALID_PATCH`       | The V4A patch could not be applied.                          |
-| `INVALID_PATH`        | A virtual path is unsafe or invalid.                         |
-| `PARTIAL_COMMIT`      | Remote writes stopped before a complete revision.            |
-| `POLICY_DENIED`       | The command policy denied a Bash command.                    |
-| `QUOTA_EXCEEDED`      | A configured limit was exceeded.                             |
-| `REVISION_NOT_FOUND`  | The requested revision is missing.                           |
-| `STORAGE`             | A Supabase Storage operation failed.                         |
-| `UNSUPPORTED_CONTENT` | The path or bytes cannot be used for this operation.         |
+| Code                   | Meaning                                                      |
+| ---------------------- | ------------------------------------------------------------ |
+| `AUTHENTICATION`       | The bearer token is missing, malformed, or not verified.     |
+| `AUTHORIZATION`        | A key, verified identity, bucket, or root is unsafe.         |
+| `COMMIT_CONFLICT`      | A changed remote entry no longer matches the opened version. |
+| `COMMIT_COORDINATION`  | The optional commit lease was lost.                          |
+| `COMMIT_IN_PROGRESS`   | Code tried to mutate or commit an active commit.             |
+| `EXPIRED_CAPABILITY`   | The delegated capability has expired.                        |
+| `HISTORY_CORRUPTION`   | A history record could not be parsed.                        |
+| `IDEMPOTENCY_CONFLICT` | An idempotency key was reused for a different commit.        |
+| `INVALID_CAPABILITY`   | The delegated capability is not acceptable.                  |
+| `INVALID_PATCH`        | The V4A patch could not be applied.                          |
+| `INVALID_PATH`         | A virtual path is unsafe or invalid.                         |
+| `PARTIAL_COMMIT`       | Remote writes stopped before a complete revision.            |
+| `POLICY_DENIED`        | The command policy denied a Bash command.                    |
+| `QUOTA_EXCEEDED`       | A configured limit was exceeded.                             |
+| `REVISION_NOT_FOUND`   | The requested revision is missing.                           |
+| `STORAGE`              | A Supabase Storage operation failed.                         |
+| `UNSUPPORTED_CONTENT`  | The path or bytes cannot be used for this operation.         |
 
 `SupabashError.path` identifies the affected virtual path when one is
 available. The original error is available through `error.cause`.
@@ -501,8 +547,9 @@ stay lazy. A very large object count increases open time.
 The root bundle is tree-shakeable relative to the AI SDK export. Importing
 `@seanmozeik/supabash-fs` must not resolve `ai`, `@ai-sdk/openai`, or
 `bash-tool`. Import `@seanmozeik/supabash-fs/ai-sdk` only when those optional
-peers are installed. `view_image` stays out of the AI SDK bundle until it is
-enabled.
+peers are installed. A clean root-only package test confirms that a missing AI
+peer is named in the import error. The image implementation is a separate
+dynamic chunk and is not loaded when image support is disabled.
 
 Just Bash is an in-process virtual shell. It does not start a container and
 does not provide operating-system isolation.
@@ -526,8 +573,9 @@ the `workspaces` bucket when needed and runs the Deno suite. Point those
 variables at a Docker stack, not a hosted project.
 
 The gate checks formatting, lint, TypeScript, source size, tests, the browser
-build, Deno type resolution, production dependencies, and package contents.
-This repository does not add CI.
+build, Deno type resolution, production dependencies, package contents, clean
+Bun consumers, and a clean Deno consumer of the packed tarball. This repository
+does not add CI.
 
 ## Licence
 

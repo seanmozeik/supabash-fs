@@ -12,6 +12,23 @@ import {
   type WorkspaceLimits,
 } from './limits.js';
 
+export const assertWorkspaceLimits = (limits: WorkspaceLimits): void => {
+  const values: readonly [string, number | undefined, boolean][] = [
+    ['maxDiffPreviewBytes', limits.maxDiffPreviewBytes, false],
+    ['maxFileSize', limits.maxFileSize, false],
+    ['maxHistoryPageSize', limits.maxHistoryPageSize, true],
+    ['maxPathLength', limits.maxPathLength, false],
+    ['maxStagedBytes', limits.maxStagedBytes, false],
+    ['maxTransactionMetadataBytes', limits.maxTransactionMetadataBytes, false],
+    ['maxVisibleFiles', limits.maxVisibleFiles, false],
+  ];
+  for (const [name, value, positive] of values) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < (positive ? 1 : 0))) {
+      throw quota(`${name} must be a ${positive ? 'positive' : 'non-negative'} safe integer.`);
+    }
+  }
+};
+
 export const assertCommitQuotas = (
   uploads: readonly UploadEntry[],
   deletions: readonly { path: string }[],

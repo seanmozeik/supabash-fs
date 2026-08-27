@@ -11,27 +11,33 @@ import {
 import type { WorkspaceEntryKind } from '../api/contracts.js';
 import { SupabashError } from '../api/errors.js';
 import { comparePaths, compareRemoteEntryPaths } from './entry-order.js';
+import { moveDescendant, normalizeVirtualPath, ROOT_PATH } from './path.js';
+import type { PendingChanges, PendingMove, RemoteEntry, UploadDraft } from './storage.js';
 import {
-  isSameOrDescendant,
-  moveDescendant,
-  normalizeVirtualPath,
-  parentPaths,
-  ROOT_PATH,
-} from './path.js';
-import type { PendingChanges, RemoteEntry, UploadDraft } from './storage.js';
-import { pendingAgainstBaseline, pristineRemoteStat, rebuildLiveTree } from './tracked-restore.js';
+  entriesWithin,
+  entryForAudit,
+  fileMatchesBaseline,
+  pristineStatFor,
+  recordDeletion,
+  recordMove,
+  recordUpsert,
+  uploadDraftFor,
+} from './tracked-inspection.js';
+import { pendingAgainstBaseline, rebuildLiveTree } from './tracked-restore.js';
 
 type ReadOptions = Parameters<IFileSystem['readFile']>[1];
 type WriteOptions = Parameters<IFileSystem['writeFile']>[2];
 
 export class TrackedFileSystem implements IFileSystem {
   private baseline = new Map<string, RemoteEntry>();
+  private readonly baselineHashes = new Map<string, Promise<string>>();
   private commitInProgress = false;
   private deletions = new Map<string, RemoteEntry>();
   private readonly download: (entry: RemoteEntry) => Promise<Uint8Array>;
   private inner = new InMemoryFs();
   private kinds = new Map<string, WorkspaceEntryKind>([[ROOT_PATH, 'directory']]);
   private readonly maxTotalBytes: number | undefined;
+  private readonly moves = new Map<string, string>();
   private upserts = new Set<string>();
 
   private constructor(
@@ -57,7 +63,9 @@ export class TrackedFileSystem implements IFileSystem {
     this.inner = live.inner;
     this.kinds = live.kinds;
     this.baseline = new Map(entries.map((entry) => [entry.path, entry]));
+    this.baselineHashes.clear();
     this.deletions.clear();
+    this.moves.clear();
     this.upserts.clear();
     this.commitInProgress = false;
   }
@@ -72,6 +80,7 @@ export class TrackedFileSystem implements IFileSystem {
     this.kinds = live.kinds;
     const pending = pendingAgainstBaseline(this.baseline, entries);
     this.deletions = pending.deletions;
+    this.moves.clear();
     this.upserts = pending.upserts;
   }
 
@@ -83,16 +92,8 @@ export class TrackedFileSystem implements IFileSystem {
     return this.pendingPreview();
   }
 
-  finishCommit(entries: readonly RemoteEntry[]): void {
-    for (const deleted of this.deletions.values()) {
-      this.baseline.delete(deleted.path);
-    }
-    for (const entry of entries) {
-      this.baseline.set(entry.path, entry);
-    }
-    this.deletions.clear();
-    this.upserts.clear();
-    this.commitInProgress = false;
+  finishCommit(entries: readonly RemoteEntry[]): Promise<void> {
+    return this.reset(entries);
   }
 
   failCommit(): void {
@@ -107,6 +108,9 @@ export class TrackedFileSystem implements IFileSystem {
   pendingPreview(): PendingChanges {
     return {
       deletions: [...this.deletions.values()].toSorted(compareRemoteEntryPaths),
+      moves: [...this.moves]
+        .map(([from, to]): PendingMove => ({ from, to }))
+        .toSorted((left, right) => comparePaths(left.from, right.from)),
       upserts: [...this.upserts].toSorted(comparePaths),
     };
   }
@@ -127,32 +131,24 @@ export class TrackedFileSystem implements IFileSystem {
     return this.baseline.get(normalizeVirtualPath(path));
   }
 
-  async uploadEntry(path: string): Promise<UploadDraft> {
-    const normalized = normalizeVirtualPath(path);
-    const kind = this.kinds.get(normalized);
-    if (kind === undefined) {
-      throw new SupabashError('INVALID_PATH', 'Changed path no longer exists.', { path });
-    }
-    const stat = await this.inner.lstat(normalized);
-    if (kind === 'file') {
-      return {
-        body: await this.inner.readFileBuffer(normalized),
-        kind,
-        mode: stat.mode,
-        modifiedAt: stat.mtime,
-        path: normalized,
-      };
-    }
-    if (kind === 'symlink') {
-      return {
-        kind,
-        mode: stat.mode,
-        modifiedAt: stat.mtime,
-        path: normalized,
-        target: await this.inner.readlink(normalized),
-      };
-    }
-    return { kind, mode: stat.mode, modifiedAt: stat.mtime, path: normalized };
+  baselineEntryForAudit(path: string): Promise<RemoteEntry | undefined> {
+    return entryForAudit(this.baselineEntry(path), this.baselineHashes, this.download);
+  }
+
+  refreshBaseline(entries: readonly RemoteEntry[]): void {
+    const next = new Map(entries.map((entry) => [entry.path, entry]));
+    this.baseline = next;
+    this.baselineHashes.clear();
+    this.deletions = new Map(
+      [...this.deletions.keys()].flatMap((path) => {
+        const entry = next.get(path);
+        return entry === undefined ? [] : [[path, entry] as const];
+      }),
+    );
+  }
+
+  uploadEntry(path: string): Promise<UploadDraft> {
+    return uploadDraftFor(this.inner, this.kinds, path);
   }
 
   readFile(path: string, options?: ReadOptions): Promise<string> {
@@ -170,15 +166,23 @@ export class TrackedFileSystem implements IFileSystem {
   async writeFile(path: string, content: FileContent, options?: WriteOptions): Promise<void> {
     this.assertMutable();
     const normalized = normalizeVirtualPath(path);
+    const wasChanged = this.upserts.has(normalized) || this.deletions.has(normalized);
     await this.inner.writeFile(normalized, content, options);
     this.trackUpsert(normalized, 'file');
+    if (wasChanged) {
+      await this.reconcileFile(normalized);
+    }
   }
 
   async appendFile(path: string, content: FileContent, options?: WriteOptions): Promise<void> {
     this.assertMutable();
     const normalized = normalizeVirtualPath(path);
+    const wasChanged = this.upserts.has(normalized) || this.deletions.has(normalized);
     await this.inner.appendFile(normalized, content, options);
     this.trackUpsert(normalized, 'file');
+    if (wasChanged) {
+      await this.reconcileFile(normalized);
+    }
   }
 
   exists(path: string): Promise<boolean> {
@@ -238,6 +242,7 @@ export class TrackedFileSystem implements IFileSystem {
     const moved = this.entriesWithin(normalizedSource);
     await this.inner.mv(normalizedSource, normalizedDestination);
     for (const [path] of moved) {
+      this.trackMove(path, moveDescendant(path, normalizedSource, normalizedDestination));
       this.trackDeletion(path);
     }
     for (const [path, kind] of moved) {
@@ -292,7 +297,7 @@ export class TrackedFileSystem implements IFileSystem {
 
   private pristineStat(path: string): Promise<FsStat> | undefined {
     const normalized = normalizeVirtualPath(path);
-    return pristineRemoteStat(
+    return pristineStatFor(
       normalized,
       this.baseline,
       this.upserts.has(normalized) || this.deletions.has(normalized),
@@ -300,9 +305,7 @@ export class TrackedFileSystem implements IFileSystem {
   }
 
   private entriesWithin(path: string): (readonly [string, WorkspaceEntryKind])[] {
-    return [...this.kinds].filter(
-      ([candidate]) => candidate !== ROOT_PATH && isSameOrDescendant(candidate, path),
-    );
+    return entriesWithin(this.kinds, path);
   }
 
   private trackExistingUpsert(path: string): void {
@@ -314,25 +317,22 @@ export class TrackedFileSystem implements IFileSystem {
   }
 
   private trackUpsert(path: string, kind: WorkspaceEntryKind): void {
-    this.rememberParents(path);
-    this.kinds.set(path, kind);
-    this.deletions.delete(path);
-    this.upserts.add(path);
+    recordUpsert(path, kind, this.kinds, this.deletions, this.upserts);
   }
 
   private trackDeletion(path: string): void {
-    const normalized = normalizeVirtualPath(path);
-    const baseline = this.baseline.get(normalized);
-    if (baseline !== undefined) {
-      this.deletions.set(normalized, baseline);
-    }
-    this.upserts.delete(normalized);
-    this.kinds.delete(normalized);
+    recordDeletion(path, this.baseline, this.deletions, this.kinds, this.moves, this.upserts);
   }
 
-  private rememberParents(path: string): void {
-    for (const parent of parentPaths(path)) {
-      this.kinds.set(parent, 'directory');
+  private trackMove(from: string, to: string): void {
+    recordMove(from, to, this.baseline, this.moves);
+  }
+
+  private async reconcileFile(path: string): Promise<void> {
+    const baseline = this.baseline.get(path);
+    if (await fileMatchesBaseline(this.inner, baseline, this.baselineHashes, this.download)) {
+      this.deletions.delete(path);
+      this.upserts.delete(path);
     }
   }
 

@@ -2,12 +2,15 @@ import { SupabashError } from '../api/errors.js';
 
 export const HISTORY_ROOT = '.supabash';
 
+const encodeHistoryId = (value: string): string => encodeURIComponent(value).replaceAll('.', '%2E');
+
 export const historyKey = {
-  checkpoint: (id: string) => `${HISTORY_ROOT}/checkpoints/${id}.json`,
+  abort: (transactionId: string) => `${HISTORY_ROOT}/transactions/${transactionId}/abort.json`,
+  checkpoint: (id: string) => `${HISTORY_ROOT}/checkpoints/${encodeHistoryId(id)}.json`,
   complete: (transactionId: string) =>
     `${HISTORY_ROOT}/transactions/${transactionId}/complete.json`,
   head: `${HISTORY_ROOT}/head.json`,
-  idempotency: (key: string) => `${HISTORY_ROOT}/idempotency/${encodeURIComponent(key)}.json`,
+  idempotency: (key: string) => `${HISTORY_ROOT}/idempotency/${encodeHistoryId(key)}.json`,
   intent: (transactionId: string) => `${HISTORY_ROOT}/transactions/${transactionId}/intent.json`,
   object: (hash: string) => `${HISTORY_ROOT}/objects/${hash}`,
   revision: (revision: string) => `${HISTORY_ROOT}/revisions/${revision}.json`,

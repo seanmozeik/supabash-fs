@@ -5,12 +5,13 @@ import { Bash } from 'just-bash/browser';
 import type { Workspace } from '../api/contracts.js';
 import { createCommandPolicy } from '../policy/inspect.js';
 import { DEFAULT_MAX_COMMAND_LENGTH, type CommandInspectDecision } from '../policy/types.js';
-import { DEFAULT_MAX_BASH_OUTPUT, boundText } from './bounds.js';
+import { DEFAULT_MAX_BASH_OUTPUT, assertPositiveLimit, boundText } from './bounds.js';
 import type { BashToolOptions } from './options.js';
 import { safeToolText } from './redact.js';
 
 const SCOPED_ROOT_INSTRUCTIONS =
   'The filesystem root is already scoped to this workspace. Do not select a bucket, user, prefix, access token, or storage client. Do not commit, discard, inspect history, checkpoint, diff, or restore.';
+export const DEFAULT_MAX_BASH_EXECUTION_TIME_MS = 30_000;
 
 /**
  * The bash-tool onBeforeBashCall hook is synchronous and cannot return a typed
@@ -25,6 +26,11 @@ export const createWorkspaceBashTool = async (
     options.limits?.maxCommandLength ??
     DEFAULT_MAX_COMMAND_LENGTH;
   const maxBashOutput = options.limits?.maxBashOutput ?? DEFAULT_MAX_BASH_OUTPUT;
+  const maxExecutionTimeMs =
+    options.limits?.maxExecutionTimeMs ?? DEFAULT_MAX_BASH_EXECUTION_TIME_MS;
+  assertPositiveLimit(maxCommandLength, 'maxCommandLength');
+  assertPositiveLimit(maxBashOutput, 'maxBashOutput');
+  assertPositiveLimit(maxExecutionTimeMs, 'maxExecutionTimeMs');
   const policy =
     options.policy ??
     createCommandPolicy({ ...options.policyOptions, fs: workspace.fs, maxCommandLength });
@@ -39,7 +45,7 @@ export const createWorkspaceBashTool = async (
         stdout: safeToolText(result.stdout, maxBashOutput, boundText),
       },
     }),
-    sandbox: new Bash({ cwd: '/', fs: workspace.fs }),
+    sandbox: new Bash({ cwd: '/', executionLimits: { maxExecutionTimeMs }, fs: workspace.fs }),
   });
   const { execute } = toolkit.bash;
   if (execute === undefined) {

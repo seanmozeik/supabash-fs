@@ -15,6 +15,10 @@
     "noUncheckedIndexedAccess": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
+    "paths": {
+      "@seanmozeik/supabash-fs": ["./src/index.ts"],
+      "@seanmozeik/supabash-fs/ai-sdk": ["./src/ai-sdk/index.ts"]
+    },
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "strict": true,

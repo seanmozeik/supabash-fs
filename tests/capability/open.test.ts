@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
 import type { SupabashError } from '../../src/api/errors.ts';
+import { asUnknownRecord } from '../../src/api/json.ts';
 import { createDelegatedCapability, Supabash } from '../../src/index.ts';
 import { ed25519Pair, sampleClaims, verifierFor } from '../support/delegated.ts';
 import { FakeSupabase } from '../support/fake-supabase.ts';
@@ -60,6 +61,76 @@ describe('delegated workspace access', () => {
         verifier: verifierFor(keys.publicKey),
       }),
     ).rejects.toMatchObject(invalidError());
+  });
+
+  test('does not consume the nonce before scope checks and storage open succeed', async () => {
+    const api = new FakeSupabase({});
+    const keys = await ed25519Pair();
+    const claims = sampleClaims({ nonce: 'retry-open' });
+    const capability = await createDelegatedCapability({
+      claims,
+      keyId: 'k1',
+      privateKey: keys.privateKey,
+    });
+    const consumed = new Set<string>();
+    const verifier = verifierFor(keys.publicKey, {
+      nonceStore: {
+        consume: (nonce: string) => {
+          if (consumed.has(nonce)) {
+            return Promise.resolve(false);
+          }
+          consumed.add(nonce);
+          return Promise.resolve(true);
+        },
+      },
+    });
+    const bucketFailure = await captureFailure(
+      Supabash.openDelegated({
+        bucket: 'other-bucket',
+        capability,
+        fetch: api.fetch,
+        serviceRoleKey: 'sb_secret_test',
+        supabaseUrl: claims.origin,
+        verifier,
+      }),
+    );
+    const consumedAfterBucketFailure = consumed.size;
+    const storageFailure = await captureFailure(
+      Supabash.openDelegated({
+        bucket: claims.bucket,
+        capability,
+        fetch: Object.assign(() => Promise.reject(new Error('temporary storage failure')), {
+          preconnect: String,
+        }),
+        serviceRoleKey: 'sb_secret_test',
+        supabaseUrl: claims.origin,
+        verifier,
+      }),
+    );
+    const consumedAfterStorageFailure = consumed.size;
+    const workspace = await Supabash.openDelegated({
+      bucket: claims.bucket,
+      capability,
+      fetch: api.fetch,
+      serviceRoleKey: 'sb_secret_test',
+      supabaseUrl: claims.origin,
+      verifier,
+    });
+    expect({
+      bucketFailure,
+      consumed: [...consumed],
+      consumedAfterBucketFailure,
+      consumedAfterStorageFailure,
+      opened: typeof workspace.commit,
+      storageFailure,
+    }).toStrictEqual({
+      bucketFailure: { code: 'INVALID_CAPABILITY', rejected: true },
+      consumed: ['retry-open'],
+      consumedAfterBucketFailure: 0,
+      consumedAfterStorageFailure: 0,
+      opened: 'function',
+      storageFailure: { code: 'PARTIAL_COMMIT', rejected: true },
+    });
   });
 
   test('blocks writes when the capability omits the write operation', async () => {
@@ -166,3 +237,21 @@ describe('delegated workspace access', () => {
 
 const invalidError = (): Partial<SupabashError> => ({ code: 'INVALID_CAPABILITY' });
 const authorizationError = (): Partial<SupabashError> => ({ code: 'AUTHORIZATION' });
+
+interface CapturedFailure {
+  readonly code: string | undefined;
+  readonly rejected: boolean;
+}
+
+const captureFailure = async (operation: Promise<unknown>): Promise<CapturedFailure> => {
+  try {
+    await operation;
+    return { code: undefined, rejected: false };
+  } catch (error) {
+    const record = asUnknownRecord(error);
+    return {
+      code: typeof record?.['code'] === 'string' ? record['code'] : undefined,
+      rejected: true,
+    };
+  }
+};

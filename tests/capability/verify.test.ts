@@ -110,6 +110,26 @@ describe('delegated capabilities', () => {
     ).rejects.toMatchObject(invalidError());
   });
 
+  test('rejects capabilities with excessive or invalid lifetimes', async () => {
+    const keys = await ed25519Pair();
+    const iat = Math.floor(Date.now() / 1000);
+    const longLived = await createDelegatedCapability({
+      claims: sampleClaims({ exp: iat + 901, iat }),
+      keyId: 'k1',
+      privateKey: keys.privateKey,
+    });
+    await expect(
+      verifyDelegatedCapability({ capability: longLived, verifier: verifierFor(keys.publicKey) }),
+    ).rejects.toMatchObject(invalidError());
+    expect(() =>
+      createDelegatedCapability({
+        claims: sampleClaims({ iat: iat + 0.5 }),
+        keyId: 'k1',
+        privateKey: keys.privateKey,
+      }),
+    ).toThrow('missing');
+  });
+
   test('rejects parent and traversal prefixes and does not leak the token', async () => {
     const keys = await ed25519Pair();
     expect(() =>

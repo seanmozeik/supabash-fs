@@ -31,7 +31,13 @@ export interface UploadEntry extends UploadDraft {
 
 export interface PendingChanges {
   readonly deletions: readonly RemoteEntry[];
+  readonly moves: readonly PendingMove[];
   readonly upserts: readonly string[];
+}
+
+export interface PendingMove {
+  readonly from: string;
+  readonly to: string;
 }
 
 export interface ScopedStorage {

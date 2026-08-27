@@ -25,12 +25,25 @@ export const undoWrite =
   };
 
 export const undoMove =
-  (fs: IFileSystem, source: string, destination: string, previous: Uint8Array): Undo =>
+  (
+    fs: IFileSystem,
+    source: string,
+    destination: string,
+    previous: Uint8Array,
+    createdParents: readonly string[] = [],
+  ): Undo =>
   async () => {
     if (await fs.exists(destination)) {
       await fs.rm(destination);
     }
     await fs.writeFile(source, previous);
+    for (const parent of [...createdParents].toReversed()) {
+      const exists = await fs.exists(parent);
+      const names = exists ? await fs.readdir(parent) : undefined;
+      if (names?.length === 0) {
+        await fs.rm(parent);
+      }
+    }
   };
 
 export const undoDelete =
@@ -50,7 +63,15 @@ export const missingParents = async (fs: IFileSystem, path: string): Promise<rea
 };
 
 export const runUndos = async (undos: readonly Undo[]): Promise<void> => {
+  const failures: unknown[] = [];
   for (const undo of [...undos].toReversed()) {
-    await undo();
+    try {
+      await undo();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'One or more patch rollback operations failed.');
   }
 };

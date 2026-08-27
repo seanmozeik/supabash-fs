@@ -3,7 +3,7 @@ import { jsonSchema, tool, type Tool } from 'ai';
 import type { Workspace } from '../api/contracts.js';
 import { SupabashError } from '../api/errors.js';
 import { normalizeVirtualPath } from '../core/path.js';
-import { DEFAULT_MAX_IMAGE_BYTES } from './bounds.js';
+import { DEFAULT_MAX_IMAGE_BYTES, assertPositiveLimit } from './bounds.js';
 import type { ViewImageResult } from './options.js';
 
 const IMAGE_TYPES: Readonly<Record<string, string>> = {
@@ -17,8 +17,9 @@ const IMAGE_TYPES: Readonly<Record<string, string>> = {
 export const createViewImageTool = (
   workspace: Workspace,
   maxBytes = DEFAULT_MAX_IMAGE_BYTES,
-): Tool =>
-  tool({
+): Tool => {
+  assertPositiveLimit(maxBytes, 'viewImage.maxBytes');
+  return tool({
     description:
       'Inspect an image file in the already-scoped workspace root. This tool cannot edit files, select a bucket, or access storage credentials.',
     execute: async ({ path }: { path: string }): Promise<ViewImageResult> => {
@@ -54,7 +55,19 @@ export const createViewImageTool = (
       required: ['path'],
       type: 'object',
     }),
+    toModelOutput: ({ output }: { output: ViewImageResult }) => ({
+      type: 'content',
+      value: [
+        {
+          data: { data: output.data, type: 'data' },
+          filename: output.path.slice(output.path.lastIndexOf('/') + 1),
+          mediaType: output.mediaType,
+          type: 'file',
+        },
+      ],
+    }),
   });
+};
 
 const mediaTypeFor = (path: string, body: Uint8Array): string => {
   const extension = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
@@ -92,9 +105,10 @@ const hasPrefix = (body: Uint8Array, prefix: readonly number[]): boolean =>
   prefix.every((value, index) => body[index] === value);
 
 const bytesToBase64 = (body: Uint8Array): string => {
-  let binary = '';
-  for (const byte of body) {
-    binary += String.fromCodePoint(byte);
+  const chunks: string[] = [];
+  const chunkSize = 32_768;
+  for (let index = 0; index < body.length; index += chunkSize) {
+    chunks.push(String.fromCodePoint(...body.subarray(index, index + chunkSize)));
   }
-  return btoa(binary);
+  return btoa(chunks.join(''));
 };

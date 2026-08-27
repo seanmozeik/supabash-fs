@@ -1,5 +1,6 @@
 import {
   DEFAULT_CLOCK_SKEW_SECONDS,
+  DEFAULT_MAX_CAPABILITY_LIFETIME_SECONDS,
   type DelegatedCapabilityClaims,
   type VerifyDelegatedCapabilityInput,
 } from '../api/capability.js';
@@ -8,6 +9,14 @@ import { assertClaimSchema, parseClaims } from './claims.js';
 import { jwsKeyId, peekCompactJwsHeader, verifyCompactJws } from './jws.js';
 
 export const verifyDelegatedCapability = async (
+  input: VerifyDelegatedCapabilityInput,
+): Promise<DelegatedCapabilityClaims> => {
+  const claims = await verifyDelegatedCapabilityClaims(input);
+  await consumeDelegatedCapabilityNonce(claims, input.verifier);
+  return claims;
+};
+
+export const verifyDelegatedCapabilityClaims = async (
   input: VerifyDelegatedCapabilityInput,
 ): Promise<DelegatedCapabilityClaims> => {
   try {
@@ -38,7 +47,7 @@ const verifyInner = async (
   const claims = parseClaims(payload);
   assertClaimSchema(claims);
   assertAudience(claims, input.verifier);
-  await assertFresh(claims, input);
+  assertFresh(claims, input);
   return claims;
 };
 
@@ -54,11 +63,18 @@ const assertAudience = (
   }
 };
 
-const assertFresh = async (
+const assertFresh = (
   claims: DelegatedCapabilityClaims,
   input: VerifyDelegatedCapabilityInput,
-): Promise<void> => {
+): void => {
   const skew = input.verifier.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
+  const maxLifetime = input.verifier.maxLifetimeSeconds ?? DEFAULT_MAX_CAPABILITY_LIFETIME_SECONDS;
+  if (!Number.isSafeInteger(skew) || skew < 0) {
+    throw new SupabashError('INVALID_CAPABILITY', 'Capability clock skew is invalid.');
+  }
+  if (!Number.isSafeInteger(maxLifetime) || maxLifetime < 1) {
+    throw new SupabashError('INVALID_CAPABILITY', 'Capability maximum lifetime is invalid.');
+  }
   const now = Math.floor(Date.now() / 1000);
   if (claims.exp + skew < now) {
     throw new SupabashError('EXPIRED_CAPABILITY', 'Delegated capability has expired.');
@@ -69,9 +85,25 @@ const assertFresh = async (
       'Capability issued-at time is too far in the future.',
     );
   }
-  const store = input.verifier.nonceStore;
+  if (claims.exp <= claims.iat || claims.exp - claims.iat > maxLifetime) {
+    throw new SupabashError('INVALID_CAPABILITY', 'Capability lifetime is invalid.');
+  }
+};
+
+export const consumeDelegatedCapabilityNonce = async (
+  claims: DelegatedCapabilityClaims,
+  verifier: VerifyDelegatedCapabilityInput['verifier'],
+): Promise<void> => {
+  const store = verifier.nonceStore;
   if (store !== undefined) {
-    const firstUse = await store.consume(claims.nonce, new Date(claims.exp * 1000));
+    let firstUse: boolean;
+    try {
+      firstUse = await store.consume(claims.nonce, new Date(claims.exp * 1000));
+    } catch (error) {
+      throw new SupabashError('INVALID_CAPABILITY', 'Capability nonce could not be recorded.', {
+        cause: error,
+      });
+    }
     if (!firstUse) {
       throw new SupabashError('INVALID_CAPABILITY', 'Delegated capability nonce was already used.');
     }

@@ -1,12 +1,13 @@
 import {
-  applyPatch,
   CAPABILITY_SCHEMA_VERSION,
   createDelegatedCapability,
   Supabash,
   type DelegatedCapabilityClaims,
 } from '@seanmozeik/supabash-fs';
+import { createTools } from '@seanmozeik/supabash-fs/ai-sdk';
 
 import { assert, errorCode, subjectFrom } from './runtime.ts';
+import { invokeTool, resultField } from './tool-runtime.ts';
 
 export const proveDelegatedAccess = async (input: {
   readonly bucket: string;
@@ -33,7 +34,7 @@ export const proveDelegatedAccess = async (input: {
   const scoped = await workspace.fs.readFile('/notes.md');
   assert(scoped.includes('patched'), 'Delegated access could not read the scoped file.');
   await workspace.fs.writeFile('/delegated.md', 'from-job\n');
-  await workspace.commit();
+  const delegatedCommit = await workspace.commit();
 
   const expired = await createDelegatedCapability({
     claims: sampleClaims(input, firstUser, 'expired', { exp: Math.floor(Date.now() / 1000) - 120 }),
@@ -52,7 +53,8 @@ export const proveDelegatedAccess = async (input: {
     'Expired delegated capability was accepted.',
   );
 
-  const forged = `${valid.slice(0, -2)}AA`;
+  const forged = tamperSignature(valid);
+  assert(forged !== valid, 'Signature tampering did not change the capability.');
   await expectCode(
     Supabash.openDelegated({
       bucket: input.bucket,
@@ -81,14 +83,45 @@ export const proveDelegatedAccess = async (input: {
     !(await other.fs.exists('/notes.md')),
     'A capability for another prefix saw the first workspace.',
   );
+  const otherHistory = await other.history();
+  assert(
+    !otherHistory.records.some((record) => record.transactionId === delegatedCommit.transactionId),
+    'A capability for another prefix saw the first workspace history.',
+  );
+  await expectCode(
+    other.readRevision(delegatedCommit.revision),
+    'REVISION_NOT_FOUND',
+    'A capability for another prefix read the first workspace revision.',
+  );
+  await expectCode(
+    other.restore(delegatedCommit.revision),
+    'REVISION_NOT_FOUND',
+    'A capability for another prefix restored the first workspace revision.',
+  );
 
-  const patched = await applyPatch(workspace, {
-    diff: '-from-job\n+still-scoped\n',
-    path: '/delegated.md',
-    type: 'update_file',
+  const { tools } = await createTools({ workspace });
+  const patched = await invokeTool(tools['apply_patch'], {
+    callId: 'delegated-update',
+    operation: { diff: '-from-job\n+still-scoped\n', path: '/delegated.md', type: 'update_file' },
   });
-  assert(patched.status === 'completed', 'Delegated Apply Patch failed.');
+  assert(resultField(patched, 'status') === 'completed', 'Delegated Apply Patch failed.');
   await workspace.commit();
+};
+
+const tamperSignature = (capability: string): string => {
+  const parts = capability.split('.');
+  const [header, payload, signature] = parts;
+  if (
+    parts.length !== 3 ||
+    header === undefined ||
+    payload === undefined ||
+    signature === undefined ||
+    signature.length === 0
+  ) {
+    throw new Error('Capability has no signature.');
+  }
+  const replacement = signature.startsWith('A') ? 'B' : 'A';
+  return `${header}.${payload}.${replacement}${signature.slice(1)}`;
 };
 
 const sampleClaims = (

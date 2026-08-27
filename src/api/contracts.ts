@@ -4,6 +4,7 @@ import type { CommitOptions, CommitStatus } from './commit.js';
 import type {
   CheckpointOptions,
   CheckpointReceipt,
+  CheckpointRecord,
   HistoryPage,
   HistoryQuery,
   PurgeOptions,
@@ -13,19 +14,24 @@ import type {
   RevisionDiff,
   RevisionDiffInput,
 } from './history.js';
+import type { JsonValue } from './json.js';
 
-export type WorkspaceChangeKind = 'delete' | 'upsert';
+export type WorkspaceChangeKind = 'delete' | 'move' | 'upsert';
 export type WorkspaceEntryKind = 'directory' | 'file' | 'symlink';
 
 export interface WorkspaceChange {
+  readonly afterEtag?: string;
   readonly afterHash?: string;
   readonly afterSize?: number;
+  readonly beforeEtag?: string;
   readonly beforeHash?: string;
   readonly beforeSize?: number;
   readonly contentHash?: string;
   readonly entryKind: WorkspaceEntryKind;
   readonly etag?: string;
   readonly kind: WorkspaceChangeKind;
+  readonly moveFrom?: string;
+  readonly moveTo?: string;
   readonly path: string;
 }
 
@@ -36,6 +42,8 @@ export interface CommitReceipt {
   readonly committedAt: Date;
   readonly correlationId: string;
   readonly cursor: string;
+  readonly idempotencyKey?: string;
+  readonly metadata?: Readonly<Record<string, JsonValue>>;
   readonly parentRevision: string | null;
   readonly revision: string;
   readonly schemaVersion: number;
@@ -48,7 +56,9 @@ export interface Workspace {
   readonly fs: IFileSystem;
   readonly changes: () => readonly WorkspaceChange[];
   readonly checkpoint: (options?: CheckpointOptions) => Promise<CheckpointReceipt>;
+  readonly checkpoints: () => Promise<readonly CheckpointRecord[]>;
   readonly commit: (options?: CommitOptions) => Promise<CommitReceipt>;
+  readonly deleteCheckpoint: (checkpointId: string) => Promise<void>;
   readonly discard: () => Promise<void>;
   readonly diff: (input: RevisionDiffInput) => Promise<RevisionDiff>;
   readonly history: (query?: HistoryQuery) => Promise<HistoryPage>;

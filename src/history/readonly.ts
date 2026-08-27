@@ -1,5 +1,6 @@
 import { SupabashError } from '../api/errors.js';
 import type { ReadonlyWorkspaceView, RevisionEntry } from '../api/history.js';
+import { normalizeVirtualPath } from '../core/path.js';
 import type { HistoryBlobStore } from './blob-store.js';
 import { readBytes, readJson } from './json-io.js';
 import { historyKey } from './keys.js';
@@ -25,14 +26,17 @@ const readRevisionFile = async (
   entries: readonly RevisionEntry[],
   path: string,
 ): Promise<string> => {
-  const entry = entries.find((candidate) => candidate.path === path);
+  const normalized = normalizeVirtualPath(path);
+  const entry = entries.find((candidate) => candidate.path === normalized);
   if (entry?.entryKind !== 'file' || entry.contentHash === undefined) {
-    throw new SupabashError('REVISION_NOT_FOUND', 'Revision file does not exist.', { path });
+    throw new SupabashError('REVISION_NOT_FOUND', 'Revision file does not exist.', {
+      path: normalized,
+    });
   }
   const body = await readBytes(history, historyKey.object(entry.contentHash));
   if (body === undefined) {
     throw new SupabashError('REVISION_NOT_FOUND', 'Historical file body is no longer retained.', {
-      path,
+      path: normalized,
     });
   }
   return new TextDecoder().decode(body);

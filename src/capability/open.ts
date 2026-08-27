@@ -8,11 +8,11 @@ import { createStorageWorkspace } from '../core/workspace.js';
 import { jwtRole } from '../supabase/jwt.js';
 import { createSupabaseStorage } from '../supabase/storage.js';
 import { guardWorkspace } from './guard.js';
-import { verifyDelegatedCapability } from './verify.js';
+import { consumeDelegatedCapabilityNonce, verifyDelegatedCapabilityClaims } from './verify.js';
 
 export const openDelegated = async (options: OpenDelegatedOptions): Promise<Workspace> => {
   assertServiceRoleKey(options.serviceRoleKey);
-  const claims = await verifyDelegatedCapability({
+  const claims = await verifyDelegatedCapabilityClaims({
     capability: options.capability,
     verifier: options.verifier,
   });
@@ -39,6 +39,7 @@ export const openDelegated = async (options: OpenDelegatedOptions): Promise<Work
       uploadConcurrency: options.uploadConcurrency,
     }),
   });
+  await consumeDelegatedCapabilityNonce(claims, options.verifier);
   return guardWorkspace(workspace, new Set(claims.ops), `delegated:${claims.sub}`, claims.corr);
 };
 

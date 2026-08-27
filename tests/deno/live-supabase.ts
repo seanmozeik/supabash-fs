@@ -1,6 +1,5 @@
-import { applyPatch, SupabashError } from '@seanmozeik/supabash-fs';
+import { createTools } from '@seanmozeik/supabash-fs/ai-sdk';
 import { createClient } from '@supabase/supabase-js';
-import { Bash } from 'just-bash/browser';
 
 import { proveDelegatedAccess } from './delegated-live.ts';
 import {
@@ -11,6 +10,7 @@ import {
   requiredEnvironment,
   subjectFrom,
 } from './runtime.ts';
+import { invokeTool, resultField } from './tool-runtime.ts';
 
 const deno = denoRuntime();
 const supabaseUrl = requiredEnvironment(deno.env, 'SUPABASH_TEST_SUPABASE_URL');
@@ -23,6 +23,17 @@ const serviceRoleKey = requiredEnvironment(deno.env, 'SUPABASH_TEST_SERVICE_ROLE
 const open = (accessToken: string) =>
   openWorkspace({ accessToken, bucket, publishableKey, supabaseUrl });
 const lines = (...values: string[]): string => values.join('\n');
+const expectRevisionNotFound = async (work: Promise<unknown>, message: string): Promise<void> => {
+  try {
+    await work;
+    throw new Error(message);
+  } catch (error) {
+    if (error instanceof Error && error.message === message) {
+      throw error;
+    }
+    assert(errorCode(error) === 'REVISION_NOT_FOUND', message);
+  }
+};
 const reset = async (accessToken: string): Promise<void> => {
   const workspace = await open(accessToken);
   const names = await workspace.fs.readdir('/');
@@ -38,23 +49,26 @@ await reset(firstToken);
 await reset(secondToken);
 
 const first = await open(firstToken);
+const { tools: firstTools } = await createTools({ workspace: first });
 await first.fs.mkdir('/notes', { recursive: true });
 await first.fs.writeFile('/notes/alpha.md', 'durable memory\n');
 await first.fs.symlink('/notes/alpha.md', '/current');
-const search = await new Bash({ cwd: '/', fs: first.fs }).exec('grep -R "durable" /notes');
-assert(search.exitCode === 0 && search.stdout.includes('durable memory'), 'Bash search failed.');
-const created = await applyPatch(first, {
-  diff: lines('+initial', '+'),
-  path: '/notes.md',
-  type: 'create_file',
+const search = await invokeTool(firstTools['bash'], { command: 'grep -R "durable" /notes' });
+assert(
+  resultField(search, 'exitCode') === 0 &&
+    String(resultField(search, 'stdout')).includes('durable memory'),
+  'Bash search failed.',
+);
+const created = await invokeTool(firstTools['apply_patch'], {
+  callId: 'live-create',
+  operation: { diff: lines('+initial', '+'), path: '/notes.md', type: 'create_file' },
 });
-assert(created.status === 'completed', 'Apply Patch create failed.');
-const patched = await applyPatch(first, {
-  diff: lines('-initial', '+patched live'),
-  path: '/notes.md',
-  type: 'update_file',
+assert(resultField(created, 'status') === 'completed', 'Apply Patch create failed.');
+const patched = await invokeTool(firstTools['apply_patch'], {
+  callId: 'live-update',
+  operation: { diff: lines('-initial', '+patched live'), path: '/notes.md', type: 'update_file' },
 });
-assert(patched.status === 'completed', 'Apply Patch update failed.');
+assert(resultField(patched, 'status') === 'completed', 'Apply Patch update failed.');
 const stagedNotes = await first.fs.readFile('/notes.md');
 assert(stagedNotes === 'patched live\n', `Staged patch text was ${JSON.stringify(stagedNotes)}`);
 assert(
@@ -105,36 +119,43 @@ assert(restored.parentRevision === dirty.revision, 'Restore did not create a for
 assert((await reopened.fs.readFile('/notes.md')) === 'patched live\n', 'Restore did not apply.');
 
 const second = await open(secondToken);
+const { tools: secondTools } = await createTools({ workspace: second });
 assert(!(await second.fs.exists('/notes.md')), 'The second user saw the first user workspace.');
 assert(!(await second.fs.exists('/notes')), 'The second user listed the first user directory.');
-const secondSearch = await new Bash({ cwd: '/', fs: second.fs }).exec('grep -R "patched" /');
-assert(!secondSearch.stdout.includes('patched live'), 'Bash searched another user workspace.');
-const secondPatch = await applyPatch(second, {
-  diff: '-patched live\n+hijack\n',
-  path: '/notes.md',
-  type: 'update_file',
+const secondSearch = await invokeTool(secondTools['bash'], { command: 'grep -R "patched" /' });
+assert(
+  !String(resultField(secondSearch, 'stdout')).includes('patched live'),
+  'Bash searched another user workspace.',
+);
+const secondPatch = await invokeTool(secondTools['apply_patch'], {
+  callId: 'cross-user-update',
+  operation: { diff: '-patched live\n+hijack\n', path: '/notes.md', type: 'update_file' },
 });
-assert(secondPatch.status === 'failed', 'Apply Patch mutated another user workspace.');
+assert(
+  resultField(secondPatch, 'status') === 'failed',
+  'Apply Patch mutated another user workspace.',
+);
 const secondHistory = await second.history();
 assert(
   !secondHistory.records.some((record) => record.transactionId === firstCommit.transactionId),
   'The second user read another user history.',
 );
-try {
-  await second.readRevision(firstCommit.revision);
-  throw new Error('The second user read another user revision.');
-} catch (error) {
-  assert(
-    error instanceof SupabashError && error.code === 'REVISION_NOT_FOUND',
-    'Cross-user revision reads must fail with REVISION_NOT_FOUND.',
-  );
-}
-try {
-  await second.restore(firstCommit.revision);
-  throw new Error('The second user restored another user revision.');
-} catch (error) {
-  assert(errorCode(error) === 'REVISION_NOT_FOUND', 'Cross-user restore must fail.');
-}
+await expectRevisionNotFound(
+  second.readRevision(firstCommit.revision),
+  'The second user read another user revision.',
+);
+await expectRevisionNotFound(
+  second.diff({ from: { revision: firstCommit.revision }, to: { staged: true } }),
+  'The second user diffed another user revision.',
+);
+await expectRevisionNotFound(
+  second.diff({ from: { checkpoint: marker.checkpointId }, to: { staged: true } }),
+  'The second user read another user checkpoint.',
+);
+await expectRevisionNotFound(
+  second.restore(firstCommit.revision),
+  'The second user restored another user revision.',
+);
 await second.fs.writeFile('/mine.md', 'second user\n');
 await second.commit();
 

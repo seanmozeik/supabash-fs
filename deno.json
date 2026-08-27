@@ -2,7 +2,11 @@
   "compilerOptions": { "lib": ["deno.window", "dom", "dom.iterable", "esnext"], "strict": true },
   "imports": {
     "@seanmozeik/supabash-fs": "./dist/index.js",
+    "@seanmozeik/supabash-fs/ai-sdk": "./dist/ai-sdk.js",
+    "@ai-sdk/openai": "npm:@ai-sdk/openai@4.0.50",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2.112.4",
+    "ai": "npm:ai@7.0.83",
+    "bash-tool": "npm:bash-tool@1.3.19",
     "just-bash/browser": "npm:just-bash@3.4.2/browser"
   },
   "lock": false

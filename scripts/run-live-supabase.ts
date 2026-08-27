@@ -80,11 +80,13 @@ const runDeno = (env: Record<string, string>): Promise<void> =>
       'deno',
       [
         'run',
+        '--minimum-dependency-age=0',
         '--config',
         'deno.json',
         '--allow-env',
         '--allow-net',
         '--allow-read',
+        '--allow-sys',
         'tests/deno/live-supabase.ts',
       ],
       { env: { ...process.env, ...env }, stdio: 'inherit' },

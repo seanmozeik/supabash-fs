@@ -12,6 +12,7 @@ import type {
   CheckpointRecord,
   CompleteRecord,
   HeadRecord,
+  IdempotencyRecord,
   IntentRecord,
   RevisionRecord,
 } from './records.js';
@@ -37,18 +38,25 @@ export const parseIntent = (value: unknown): IntentRecord => {
   const cause = optionalString(record, 'cause');
   const idempotencyKey = optionalString(record, 'idempotencyKey');
   const metadata = optionalMetadata(record);
+  const baselineEntries =
+    record['baselineEntries'] === undefined
+      ? undefined
+      : parseRevisionEntries(record['baselineEntries']);
+  const transactionId = requiredString(record, 'transactionId');
   const parsed: IntentRecord = {
     actor: requiredString(record, 'actor'),
     changes: parseChanges(record['changes']),
     correlationId: requiredString(record, 'correlationId'),
     createdAt: requiredString(record, 'createdAt'),
+    fingerprint: optionalString(record, 'fingerprint') ?? `legacy:${transactionId}`,
     newRevision: requiredString(record, 'newRevision'),
     parentRevision: nullableString(record, 'parentRevision'),
     schemaVersion: requiredNumber(record, 'schemaVersion'),
-    transactionId: requiredString(record, 'transactionId'),
+    transactionId,
   };
   return {
     ...parsed,
+    ...(baselineEntries !== undefined && { baselineEntries }),
     ...(cause !== undefined && { cause }),
     ...(idempotencyKey !== undefined && { idempotencyKey }),
     ...(metadata !== undefined && { metadata }),
@@ -83,6 +91,17 @@ export const parseCheckpoint = (value: unknown): CheckpointRecord => {
     ...(idempotencyKey !== undefined && { idempotencyKey }),
     ...(label !== undefined && { label }),
     ...(retentionClass !== undefined && { retentionClass }),
+  };
+};
+
+export const parseIdempotency = (value: unknown): IdempotencyRecord => {
+  const record = parseHistoryObject(value);
+  const fingerprint = optionalString(record, 'fingerprint');
+  return {
+    revision: requiredString(record, 'revision'),
+    schemaVersion: requiredNumber(record, 'schemaVersion'),
+    transactionId: requiredString(record, 'transactionId'),
+    ...(fingerprint !== undefined && { fingerprint }),
   };
 };
 

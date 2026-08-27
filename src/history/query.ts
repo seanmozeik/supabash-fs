@@ -1,6 +1,5 @@
 import { SupabashError } from '../api/errors.js';
 import type { HistoryPage, HistoryQuery, HistoryRecord } from '../api/history.js';
-import { comparePaths } from '../core/entry-order.js';
 import type { HistoryBlobStore } from './blob-store.js';
 import { readJson } from './json-io.js';
 import { HISTORY_ROOT, historyKey } from './keys.js';
@@ -31,16 +30,39 @@ export const readHistoryPage = async (
 ): Promise<HistoryPage> => {
   const limit = historyPageLimit(query.limit, limits);
   const completes = await listCompleteRecords(history);
-  const records = completes
-    .map((complete) => historyRecord(complete, scope))
-    .toSorted((left, right) => {
-      const byTime = left.committedAt.getTime() - right.committedAt.getTime();
-      return byTime === 0 ? comparePaths(left.transactionId, right.transactionId) : byTime;
-    });
+  const causal = await causalCompletes(history, completes);
+  const records = causal.map((complete) => historyRecord(complete, scope));
   const start = historyStart(records, query.cursor);
   const page = records.slice(start, start + limit);
-  const next = page.length === limit ? page.at(-1)?.cursor : undefined;
+  const next = start + page.length < records.length ? page.at(-1)?.cursor : undefined;
   return next === undefined ? { records: page } : { nextCursor: next, records: page };
+};
+
+const causalCompletes = async (
+  history: HistoryBlobStore,
+  completes: readonly CompleteRecord[],
+): Promise<readonly CompleteRecord[]> => {
+  const head = await readJson(history, historyKey.head, parseHead);
+  if (head === undefined) {
+    return [];
+  }
+  const byRevision = new Map(completes.map((record) => [record.newRevision, record]));
+  const reverse: CompleteRecord[] = [];
+  const seen = new Set<string>();
+  let revision: string | null = head.revision;
+  while (revision !== null) {
+    if (seen.has(revision)) {
+      throw new SupabashError('HISTORY_CORRUPTION', 'Revision history contains a cycle.');
+    }
+    seen.add(revision);
+    const record = byRevision.get(revision);
+    if (record === undefined) {
+      break;
+    }
+    reverse.push(record);
+    revision = record.parentRevision;
+  }
+  return reverse.toReversed();
 };
 
 const historyStart = (records: readonly HistoryRecord[], cursor: string | undefined): number => {
@@ -70,6 +92,8 @@ const historyRecord = (complete: CompleteRecord, scope: string): HistoryRecord =
   status: complete.status,
   transactionId: complete.transactionId,
   ...(complete.cause !== undefined && { cause: complete.cause }),
+  ...(complete.idempotencyKey !== undefined && { idempotencyKey: complete.idempotencyKey }),
+  ...(complete.metadata !== undefined && { metadata: complete.metadata }),
 });
 
 export const requireHeadRevision = async (history: HistoryBlobStore): Promise<string> => {

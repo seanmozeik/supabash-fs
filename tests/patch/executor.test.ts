@@ -1,4 +1,4 @@
-import { Bash } from 'just-bash/browser';
+import { Bash, type IFileSystem } from 'just-bash/browser';
 import { describe, expect, test } from 'vitest';
 
 import { createStorageWorkspace } from '../../src/core/workspace.ts';
@@ -120,4 +120,75 @@ describe('applyPatch executor', () => {
       stdout: 'hello',
     });
   });
+
+  test('removes implicitly created parents when a create exceeds filesystem capacity', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage(), { maxFileSystemBytes: 1 });
+    const result = await applyPatch(workspace, {
+      diff: '+too large\n',
+      path: '/nested/notes.md',
+      type: 'create_file',
+    });
+    expect({
+      changes: workspace.changes(),
+      nested: await workspace.fs.exists('/nested'),
+      status: result.status,
+    }).toStrictEqual({ changes: [], nested: false, status: 'failed' });
+  });
+
+  test('rolls back a move when the filesystem fails after moving', async () => {
+    const workspace = await workspaceWith([{ body: 'old\n', path: '/old.md' }]);
+    const result = await applyPatch(
+      { fs: failAfterMove(workspace.fs) },
+      { diff: '-old\n+new\n', moveTo: '/docs/new.md', path: '/old.md', type: 'update_file' },
+    );
+    expect({
+      changes: workspace.changes(),
+      destination: await workspace.fs.exists('/docs/new.md'),
+      docs: await workspace.fs.exists('/docs'),
+      source: await workspace.fs.readFile('/old.md'),
+      status: result.status,
+    }).toStrictEqual({
+      changes: [],
+      destination: false,
+      docs: false,
+      source: 'old\n',
+      status: 'failed',
+    });
+  });
+
+  test('measures patch limits in UTF-8 bytes', async () => {
+    const workspace = await workspaceWith();
+    const result = await applyPatch(
+      workspace,
+      { diff: '+é', path: '/unicode.md', type: 'create_file' },
+      { maxPatchSize: 2 },
+    );
+    expect({
+      exists: await workspace.fs.exists('/unicode.md'),
+      status: result.status,
+    }).toStrictEqual({ exists: false, status: 'failed' });
+  });
+
+  test('accepts a patch at the exact UTF-8 byte boundary', async () => {
+    const workspace = await workspaceWith();
+    const diff = '+é';
+    const result = await applyPatch(
+      workspace,
+      { diff, path: '/unicode.md', type: 'create_file' },
+      { maxPatchSize: new TextEncoder().encode(diff).byteLength },
+    );
+    expect({
+      status: result.status,
+      text: await workspace.fs.readFile('/unicode.md'),
+    }).toStrictEqual({ status: 'completed', text: 'é' });
+  });
 });
+
+const failAfterMove = (filesystem: IFileSystem): IFileSystem => {
+  const move = filesystem.mv.bind(filesystem);
+  filesystem.mv = async (source: string, destination: string): Promise<void> => {
+    await move(source, destination);
+    throw new Error('fault after move');
+  };
+  return filesystem;
+};

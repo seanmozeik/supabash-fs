@@ -62,6 +62,20 @@ if (new SupabashError('STORAGE', 'test').code !== 'STORAGE') throw new Error('Ba
 `,
     ),
     Bun.write(
+      path.join(consumerDirectory, 'peer-error.mjs'),
+      `try {
+  await import('@seanmozeik/supabash-fs/ai-sdk');
+  throw new Error('AI SDK import unexpectedly succeeded without its optional peers.');
+} catch (error) {
+  const message = String(error);
+  if (message.includes('unexpectedly succeeded')) throw error;
+  if (!['ai', '@ai-sdk/openai', 'bash-tool'].some((peer) => message.includes(peer))) {
+    throw new Error('AI SDK import did not identify a missing optional peer.', { cause: error });
+  }
+}
+`,
+    ),
+    Bun.write(
       path.join(consumerDirectory, 'typecheck.ts'),
       `import { Supabash, SupabashError, type SupabashOptions, type Workspace } from '@seanmozeik/supabash-fs';
 declare const options: SupabashOptions;
@@ -90,6 +104,7 @@ void error;
   await run([process.execPath, 'install', '--no-progress'], consumerDirectory);
   await run([process.execPath, 'run', 'typecheck'], consumerDirectory);
   await run([process.execPath, 'run', 'smoke'], consumerDirectory);
+  await run([process.execPath, 'peer-error.mjs'], consumerDirectory);
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

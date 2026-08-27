@@ -34,6 +34,36 @@ Agent workspace APIs on top of the authenticated Storage filesystem.
   and stages the result against the current baseline.
 - Open fast-forwards `head.json` when a later complete transaction exists.
 - Diff emits truncated text previews for added, deleted, and modified files.
+- Recover incomplete transactions to the prior head or initial snapshot before
+  opening a workspace. Completed transactions publish the head last, and
+  retries use a deterministic operation fingerprint.
+- Reject reuse of an idempotency key for different changes or transaction
+  context with `IDEMPOTENCY_CONFLICT`.
+- Record moves and complete before-and-after hash, ETag, and size fields in
+  receipts and reopened history.
+- Order history by the published parent chain and return stable exact-end page
+  cursors, including when commits have the same timestamp.
+- Record restore provenance automatically on the next commit. Add host methods
+  to list and release checkpoints so retention classes do not pin revisions
+  forever.
+- Purge stale idempotency records and recovered transaction markers while
+  preserving all content referenced by retained or checkpointed revisions.
+- Make each Apply Patch operation locally atomic, including implicit directory
+  creation and moves that fail after the filesystem has changed.
+- Return `{ tools, workspace }` from `createTools`, keep the workspace out of
+  the AI SDK tool map, and emit AI SDK image-content output from `view_image`.
+- Add a 30-second default Bash deadline and typed validation for workspace,
+  patch, Bash, image, history, diff, and purge limits.
+- Limit delegated capabilities to 15 minutes by default and consume replay
+  nonces only after scope checks and Storage open succeed.
+- Test the packed root and AI SDK exports in clean Bun consumers and Deno 2.
+  Keep optional image support in a separate production chunk.
+- Add before-and-after fault injection for every durable publish mutation,
+  concurrent lease tests, in-flight history tests, and restore-after-recovery
+  tests.
+- Serialize open-time and partial-discard recovery through the optional
+  per-scope coordinator so recovery cannot overtake an active coordinated
+  commit.
 
 ## 0.1.0
 

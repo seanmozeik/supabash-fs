@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
+import { asUnknownRecord } from '../../src/api/json.ts';
 import { comparePaths } from '../../src/core/entry-order.ts';
 import { createStorageWorkspace } from '../../src/core/workspace.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
@@ -52,6 +53,7 @@ describe('workspace history recovery', () => {
     await expect(workspace.history({ cursor: 'missing-cursor' })).rejects.toMatchObject({
       code: 'REVISION_NOT_FOUND',
     });
+    expect(rest.nextCursor).toBeUndefined();
   });
 
   test('fills revision diff previews for text files', async () => {
@@ -87,6 +89,32 @@ describe('workspace history recovery', () => {
     });
   });
 
+  test('orders same-millisecond commits by parent revision', async () => {
+    const storage = new MemoryStorage();
+    const workspace = await createStorageWorkspace(storage);
+    await workspace.fs.writeFile('/first.md', 'first\n');
+    const first = await workspace.commit();
+    await workspace.fs.writeFile('/second.md', 'second\n');
+    const second = await workspace.commit();
+    for (const key of await storage.history.list('.supabash/transactions/')) {
+      if (key.endsWith('/complete.json')) {
+        const body = await storage.history.get(key);
+        const parsed: unknown = JSON.parse(new TextDecoder().decode(body));
+        const record = asUnknownRecord(parsed);
+        if (record === undefined) {
+          throw new Error(`Invalid complete record at ${key}.`);
+        }
+        record['committedAt'] = '2026-01-01T00:00:00.000Z';
+        await storage.history.put(key, new TextEncoder().encode(JSON.stringify(record)));
+      }
+    }
+    const history = await workspace.history();
+    expect(history.records.map((record) => record.revision)).toStrictEqual([
+      first.revision,
+      second.revision,
+    ]);
+  });
+
   test('purge dry-run reports unreferenced objects without deleting them', async () => {
     const storage = new MemoryStorage();
     const workspace = await createStorageWorkspace(storage);
@@ -101,5 +129,46 @@ describe('workspace history recovery', () => {
       stillHasRevisions: keys.length >= 2,
       wouldRemove: planned.objects.length > 0,
     }).toStrictEqual({ dryRun: true, stillHasRevisions: true, wouldRemove: true });
+  });
+
+  test('lists and releases checkpoints so retention can remove their revision', async () => {
+    const storage = new MemoryStorage();
+    const workspace = await createStorageWorkspace(storage);
+    await workspace.fs.writeFile('/notes.md', 'one\n');
+    const first = await workspace.commit();
+    const marker = await workspace.checkpoint({
+      idempotencyKey: '../safe marker',
+      label: 'safe',
+      retentionClass: 'daily',
+    });
+    await workspace.fs.writeFile('/notes.md', 'two\n');
+    await workspace.commit();
+    await workspace.purge({ maxRevisions: 1 });
+    await expect(workspace.readRevision(first.revision)).resolves.toMatchObject({
+      revision: first.revision,
+    });
+    await expect(workspace.checkpoints()).resolves.toMatchObject([
+      { checkpointId: marker.checkpointId, label: 'safe', retentionClass: 'daily' },
+    ]);
+
+    await workspace.deleteCheckpoint(marker.checkpointId);
+    await workspace.purge({ maxRevisions: 1 });
+    await expect(workspace.readRevision(first.revision)).rejects.toMatchObject({
+      code: 'REVISION_NOT_FOUND',
+    });
+  });
+
+  test('removes stale idempotency mappings with purged transactions', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage());
+    const context = { actor: 'test', correlationId: 'first', idempotencyKey: '../reusable' };
+    await workspace.fs.writeFile('/notes.md', 'one\n');
+    await workspace.commit({ context });
+    await workspace.fs.writeFile('/notes.md', 'two\n');
+    await workspace.commit();
+    await workspace.purge({ maxRevisions: 1 });
+    await workspace.fs.writeFile('/notes.md', 'three\n');
+    await expect(
+      workspace.commit({ context: { ...context, correlationId: 'reused' } }),
+    ).resolves.toMatchObject({ status: 'complete' });
   });
 });

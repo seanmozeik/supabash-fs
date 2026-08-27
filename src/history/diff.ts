@@ -5,6 +5,7 @@ import type {
   RevisionDiffInput,
   RevisionEntry,
 } from '../api/history.js';
+import { comparePaths } from '../core/entry-order.js';
 import type { HistoryBlobStore } from './blob-store.js';
 import { readJson } from './json-io.js';
 import { historyKey } from './keys.js';
@@ -31,12 +32,20 @@ export const diffRevisions = async (
   const fromMap = new Map(fromState.entries.map((entry) => [entry.path, entry]));
   const toMap = new Map(toState.entries.map((entry) => [entry.path, entry]));
   const allPaths = [...new Set([...fromMap.keys(), ...toMap.keys()])].toSorted();
-  const entries: RevisionDiffEntry[] = [];
+  const rawEntries: RevisionDiffEntry[] = [];
   for (const path of allPaths) {
-    if (paths === undefined || paths.has(path)) {
-      entries.push(await diffEntry(history, fromMap.get(path), toMap.get(path), previewBytes));
+    const entry = await diffEntry(history, fromMap.get(path), toMap.get(path), previewBytes);
+    if (entry !== undefined) {
+      rawEntries.push(entry);
     }
   }
+  const detected = detectMoves(rawEntries, fromMap, toMap);
+  const entries = detected.filter(
+    (entry) =>
+      paths === undefined ||
+      paths.has(entry.path) ||
+      (entry.moveFrom !== undefined && paths.has(entry.moveFrom)),
+  );
   return { entries, fromRevision: fromState.label, toRevision: toState.label };
 };
 
@@ -81,8 +90,11 @@ const diffEntry = async (
   before: RevisionEntry | undefined,
   after: RevisionEntry | undefined,
   previewBytes: number,
-): Promise<RevisionDiffEntry> => {
+): Promise<RevisionDiffEntry | undefined> => {
   const entry = describeDiff(before, after);
+  if (entry === undefined) {
+    return undefined;
+  }
   const preview = await revisionDiffPreview(history, entry.kind, before, after, previewBytes);
   return preview === undefined ? entry : { ...entry, preview };
 };
@@ -90,7 +102,7 @@ const diffEntry = async (
 const describeDiff = (
   before: RevisionEntry | undefined,
   after: RevisionEntry | undefined,
-): RevisionDiffEntry => {
+): RevisionDiffEntry | undefined => {
   if (before === undefined && after !== undefined) {
     return {
       kind: 'added',
@@ -116,6 +128,13 @@ const describeDiff = (
       ...(before.contentHash !== undefined && { beforeHash: before.contentHash }),
     };
   }
+  if (
+    before.contentHash === after.contentHash &&
+    before.mode === after.mode &&
+    before.target === after.target
+  ) {
+    return undefined;
+  }
   if (before.contentHash === after.contentHash) {
     return {
       kind: 'metadata',
@@ -131,3 +150,42 @@ const describeDiff = (
     ...(before.contentHash !== undefined && { beforeHash: before.contentHash }),
   };
 };
+
+const detectMoves = (
+  entries: readonly RevisionDiffEntry[],
+  before: ReadonlyMap<string, RevisionEntry>,
+  after: ReadonlyMap<string, RevisionEntry>,
+): readonly RevisionDiffEntry[] => {
+  const deleted = entries.filter((entry) => entry.kind === 'deleted');
+  const additions = entries.filter((entry) => entry.kind === 'added');
+  const consumed = new Set<RevisionDiffEntry>();
+  const moves: RevisionDiffEntry[] = [];
+  for (const removed of deleted) {
+    const source = before.get(removed.path);
+    const added = additions.find(
+      (candidate) => !consumed.has(candidate) && sameContent(source, after.get(candidate.path)),
+    );
+    if (added !== undefined) {
+      consumed.add(removed);
+      consumed.add(added);
+      moves.push({
+        ...(added.afterHash !== undefined && { afterHash: added.afterHash }),
+        ...(removed.beforeHash !== undefined && { beforeHash: removed.beforeHash }),
+        kind: 'moved',
+        moveFrom: removed.path,
+        moveTo: added.path,
+        path: added.path,
+      });
+    }
+  }
+  return [...entries.filter((entry) => !consumed.has(entry)), ...moves].toSorted((left, right) =>
+    comparePaths(left.path, right.path),
+  );
+};
+
+const sameContent = (left: RevisionEntry | undefined, right: RevisionEntry | undefined): boolean =>
+  left !== undefined &&
+  right !== undefined &&
+  left.entryKind === right.entryKind &&
+  left.contentHash === right.contentHash &&
+  left.target === right.target;

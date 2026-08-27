@@ -4,7 +4,10 @@
  */
 /* oxlint-disable unicorn/prefer-export-from -- bun drops `export { name } from` as empty stubs */
 
-import { CAPABILITY_SCHEMA_VERSION as capabilitySchemaVersion } from './api/capability.js';
+import {
+  CAPABILITY_SCHEMA_VERSION as capabilitySchemaVersion,
+  DEFAULT_MAX_CAPABILITY_LIFETIME_SECONDS as defaultMaxCapabilityLifetimeSeconds,
+} from './api/capability.js';
 import { HISTORY_SCHEMA_VERSION as historySchemaVersion } from './api/commit.js';
 import { Supabash as openWorkspace, SupabashError as WorkspaceError } from './api/supabash.js';
 import { createDelegatedCapability as signDelegatedCapability } from './capability/create.js';
@@ -60,6 +63,7 @@ export type { SupabashErrorCode } from './api/errors.js';
 export type {
   CheckpointOptions,
   CheckpointReceipt,
+  CheckpointRecord,
   HistoryPage,
   HistoryQuery,
   HistoryRecord,
@@ -94,6 +98,7 @@ export type {
 } from './policy/types.js';
 
 export const CAPABILITY_SCHEMA_VERSION = capabilitySchemaVersion;
+export const DEFAULT_MAX_CAPABILITY_LIFETIME_SECONDS = defaultMaxCapabilityLifetimeSeconds;
 export const DEFAULT_MAX_COMMAND_LENGTH = defaultMaxCommandLength;
 export const DEFAULT_MAX_DIFF_PREVIEW_BYTES = defaultMaxDiffPreviewBytes;
 export const DEFAULT_MAX_FILE_SIZE = defaultMaxFileSize;

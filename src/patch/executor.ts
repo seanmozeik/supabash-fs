@@ -39,6 +39,9 @@ export const applyPatchOperations = async (
   const undos: Undo[] = [];
 
   try {
+    if (!Number.isSafeInteger(maxPatchSize) || maxPatchSize < 0) {
+      throw new SupabashError('QUOTA_EXCEEDED', 'Patch size limit must be a safe integer.');
+    }
     for (const operation of operations) {
       const sizeError = patchSizeError(operation, maxPatchSize);
       if (sizeError !== undefined) {
@@ -48,10 +51,23 @@ export const applyPatchOperations = async (
     }
     return { status: 'completed', output: completedOutput(operations) };
   } catch (error) {
+    let rollbackError: unknown;
     if (mode === 'all-or-nothing') {
-      await runUndos(undos);
+      try {
+        await runUndos(undos);
+      } catch (failure) {
+        rollbackError = failure;
+      }
     }
-    const cause = asPatchError(error);
+    const cause =
+      rollbackError === undefined
+        ? asPatchError(error)
+        : new SupabashError('INVALID_PATCH', 'Patch failed and rollback did not finish.', {
+            cause: new AggregateError(
+              [error, rollbackError],
+              'Patch execution and rollback both failed.',
+            ),
+          });
     return { cause, output: cause.message, status: 'failed' };
   }
 };
@@ -71,9 +87,15 @@ const createFile = async (fs: IFileSystem, path: string, diff: string): Promise<
   if (await fs.exists(normalized)) {
     throw new SupabashError('INVALID_PATCH', 'Path already exists.', { path: normalized });
   }
+  const content = applyCreate(diff, normalized);
   const created = await missingParents(fs, normalized);
-  await fs.writeFile(normalized, applyCreate(diff, normalized));
-  return undoCreate(fs, normalized, created);
+  const undo = undoCreate(fs, normalized, created);
+  try {
+    await fs.writeFile(normalized, content);
+  } catch (error) {
+    await rollbackMutation(undo, error);
+  }
+  return undo;
 };
 
 const updateFile = async (
@@ -86,8 +108,13 @@ const updateFile = async (
   const previous = await fs.readFileBuffer(source);
   const next = applyUpdate(decodeUtf8(previous, source), diff, source);
   if (moveTo === undefined) {
-    await fs.writeFile(source, next);
-    return undoWrite(fs, source, previous);
+    const undo = undoWrite(fs, source, previous);
+    try {
+      await fs.writeFile(source, next);
+    } catch (error) {
+      await rollbackMutation(undo, error);
+    }
+    return undo;
   }
   const destination = normalizeVirtualPath(moveTo);
   if (destination === source) {
@@ -99,16 +126,31 @@ const updateFile = async (
       path: destination,
     });
   }
-  await fs.writeFile(destination, next);
-  await fs.rm(source);
-  return undoMove(fs, source, destination, previous);
+  const created = await missingParents(fs, destination);
+  const undo = undoMove(fs, source, destination, previous, created);
+  try {
+    await fs.writeFile(source, next);
+    const deepestParent = created.at(-1);
+    if (deepestParent !== undefined) {
+      await fs.mkdir(deepestParent, { recursive: true });
+    }
+    await fs.mv(source, destination);
+  } catch (error) {
+    await rollbackMutation(undo, error);
+  }
+  return undo;
 };
 
 const deleteFile = async (fs: IFileSystem, path: string): Promise<Undo> => {
   const normalized = await existingFile(fs, path);
   const previous = await fs.readFileBuffer(normalized);
-  await fs.rm(normalized);
-  return undoDelete(fs, normalized, previous);
+  const undo = undoDelete(fs, normalized, previous);
+  try {
+    await fs.rm(normalized);
+  } catch (error) {
+    await rollbackMutation(undo, error);
+  }
+  return undo;
 };
 
 const existingFile = async (fs: IFileSystem, path: string): Promise<string> => {
@@ -151,12 +193,29 @@ const patchSizeError = (
   operation: ApplyPatchOperation,
   maxPatchSize: number,
 ): SupabashError | undefined => {
-  if (operation.type === 'delete_file' || operation.diff.length <= maxPatchSize) {
+  if (
+    operation.type === 'delete_file' ||
+    new TextEncoder().encode(operation.diff).byteLength <= maxPatchSize
+  ) {
     return undefined;
   }
   return new SupabashError('QUOTA_EXCEEDED', 'Patch exceeds the size limit.', {
     path: operation.path,
   });
+};
+
+const rollbackMutation = async (undo: Undo, error: unknown): Promise<never> => {
+  try {
+    await undo();
+  } catch (rollbackError) {
+    throw new SupabashError('INVALID_PATCH', 'Patch mutation and rollback both failed.', {
+      cause: new AggregateError(
+        [error, rollbackError],
+        'Patch mutation and local rollback both failed.',
+      ),
+    });
+  }
+  throw error;
 };
 
 const completedOutput = (operations: readonly ApplyPatchOperation[]): string => {

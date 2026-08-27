@@ -12,10 +12,12 @@ export interface HeadRecord {
 
 export interface IntentRecord {
   readonly actor: string;
+  readonly baselineEntries?: readonly RevisionEntry[];
   readonly cause?: string;
   readonly changes: readonly WorkspaceChange[];
   readonly correlationId: string;
   readonly createdAt: string;
+  readonly fingerprint: string;
   readonly idempotencyKey?: string;
   readonly metadata?: Readonly<Record<string, JsonValue>>;
   readonly newRevision: string;
@@ -49,7 +51,15 @@ export interface CheckpointRecord {
 }
 
 export interface IdempotencyRecord {
+  readonly fingerprint?: string;
   readonly revision: string;
+  readonly schemaVersion: number;
+  readonly transactionId: string;
+}
+
+export interface AbortRecord {
+  readonly abortedAt: string;
+  readonly reason: 'recovered';
   readonly schemaVersion: number;
   readonly transactionId: string;
 }
