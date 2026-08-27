@@ -4,8 +4,8 @@ import { Bash } from 'just-bash/browser';
 
 import type { Workspace } from '../api/contracts.js';
 import { createCommandPolicy } from '../policy/inspect.js';
-import type { CommandInspectDecision } from '../policy/types.js';
-import { DEFAULT_MAX_BASH_OUTPUT, DEFAULT_MAX_COMMAND_LENGTH, boundText } from './bounds.js';
+import { DEFAULT_MAX_COMMAND_LENGTH, type CommandInspectDecision } from '../policy/types.js';
+import { DEFAULT_MAX_BASH_OUTPUT, boundText } from './bounds.js';
 import type { BashToolOptions } from './options.js';
 import { safeToolText } from './redact.js';
 
@@ -20,11 +20,14 @@ export const createWorkspaceBashTool = async (
   workspace: Workspace,
   options: BashToolOptions = {},
 ): Promise<Tool> => {
-  const maxCommandLength = options.limits?.maxCommandLength ?? DEFAULT_MAX_COMMAND_LENGTH;
+  const maxCommandLength =
+    options.policyOptions?.maxCommandLength ??
+    options.limits?.maxCommandLength ??
+    DEFAULT_MAX_COMMAND_LENGTH;
   const maxBashOutput = options.limits?.maxBashOutput ?? DEFAULT_MAX_BASH_OUTPUT;
   const policy =
     options.policy ??
-    createCommandPolicy({ maxCommandLength, ...options.policyOptions, fs: workspace.fs });
+    createCommandPolicy({ ...options.policyOptions, fs: workspace.fs, maxCommandLength });
   const toolkit = await createBashTool({
     destination: '/',
     extraInstructions: SCOPED_ROOT_INSTRUCTIONS,

@@ -1,10 +1,5 @@
-import { evaluateSegments } from './rules.js';
-import { pipelineDepth, segmentsFromTokens } from './segments.js';
-import { tokenizeCommand } from './tokenize.js';
+import { evaluateCommand } from './rules.js';
 import {
-  DEFAULT_MAX_COMMAND_LENGTH,
-  DEFAULT_MAX_PIPELINE_DEPTH,
-  DEFAULT_MAX_SEGMENTS,
   allowPolicy,
   denyPolicy,
   type CommandInspectDecision,
@@ -26,22 +21,7 @@ export const inspectCommand = async (
   if (/:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/u.test(command)) {
     return denyPolicy('dangerous-command', 'Fork-bomb pattern is blocked.');
   }
-  const maxCommandLength = options.maxCommandLength ?? DEFAULT_MAX_COMMAND_LENGTH;
-  if (command.length > maxCommandLength) {
-    return denyPolicy('command-too-long', 'Command exceeds the configured length limit.');
-  }
-  const tokens = tokenizeCommand(command);
-  if (!tokens.ok) {
-    return tokens.decision;
-  }
-  const segments = segmentsFromTokens(tokens.tokens);
-  if (segments.length > (options.maxSegments ?? DEFAULT_MAX_SEGMENTS)) {
-    return denyPolicy('too-many-segments', 'Command has too many chained segments.');
-  }
-  if (pipelineDepth(segments) > (options.maxPipelineDepth ?? DEFAULT_MAX_PIPELINE_DEPTH)) {
-    return denyPolicy('pipeline-too-deep', 'Pipeline exceeds the configured depth limit.');
-  }
-  const decision = await evaluateSegments(segments, options, depth);
+  const decision = await evaluateCommand(command, options, depth);
   if (!decision.allow) {
     return decision;
   }

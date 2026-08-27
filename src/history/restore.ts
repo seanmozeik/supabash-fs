@@ -3,6 +3,7 @@ import type { IFileSystem } from 'just-bash/browser';
 import { SupabashError } from '../api/errors.js';
 import type { RestorePlan, RevisionEntry } from '../api/history.js';
 import { comparePaths } from '../core/entry-order.js';
+import { ROOT_PATH } from '../core/path.js';
 import type { HistoryBlobStore } from './blob-store.js';
 import { diffRevisions } from './diff.js';
 import { readBytes, readJson } from './json-io.js';
@@ -35,17 +36,26 @@ const applyEntries = async (
   target: readonly RevisionEntry[],
   history: HistoryBlobStore,
 ): Promise<void> => {
-  const currentPaths = new Set(current.map((entry) => entry.path));
   const targetPaths = new Set(target.map((entry) => entry.path));
+  const currentPaths = new Set(current.map((entry) => entry.path));
   for (const path of [...currentPaths].toSorted((left, right) => comparePaths(right, left))) {
-    if (!targetPaths.has(path) && path !== '/') {
-      await fs.rm(path, { force: true, recursive: true });
+    if (!targetPaths.has(path) && path !== ROOT_PATH) {
+      await removePath(fs, path);
     }
+  }
+  for (const extra of extraPaths(fs, targetPaths)) {
+    await removePath(fs, extra);
   }
   for (const entry of target) {
     await materialize(fs, entry, history);
   }
 };
+
+const extraPaths = (fs: IFileSystem, keep: ReadonlySet<string>): readonly string[] =>
+  fs
+    .getAllPaths()
+    .filter((path) => path !== ROOT_PATH && !keep.has(path))
+    .toSorted((left, right) => right.length - left.length || comparePaths(right, left));
 
 const materialize = async (
   fs: IFileSystem,
@@ -53,21 +63,24 @@ const materialize = async (
   history: HistoryBlobStore,
 ): Promise<void> => {
   if (entry.entryKind === 'directory') {
-    if (await fs.exists(entry.path)) {
-      const stat = await fs.lstat(entry.path);
-      if (!stat.isDirectory) {
-        await fs.rm(entry.path, { force: true });
-      }
+    const existing = await lstatOrMissing(fs, entry.path);
+    if (existing !== undefined && !existing.isDirectory) {
+      await fs.rm(entry.path, { force: true, recursive: true });
     }
     await fs.mkdir(entry.path, { recursive: true });
     return;
   }
   if (entry.entryKind === 'symlink') {
-    if (await sameSymlink(fs, entry.path, entry.target ?? '')) {
+    if (entry.target === undefined) {
+      throw new SupabashError('HISTORY_CORRUPTION', 'Symlink revision is missing a target.', {
+        path: entry.path,
+      });
+    }
+    if (await sameSymlink(fs, entry.path, entry.target)) {
       return;
     }
-    await replacePath(fs, entry.path);
-    await fs.symlink(entry.target ?? '', entry.path);
+    await removePath(fs, entry.path);
+    await fs.symlink(entry.target, entry.path);
     return;
   }
   if (entry.contentHash === undefined) {
@@ -81,25 +94,34 @@ const materialize = async (
       path: entry.path,
     });
   }
-  if (await fs.exists(entry.path)) {
-    const stat = await fs.lstat(entry.path);
-    if (!stat.isFile) {
-      await fs.rm(entry.path, { force: true, recursive: true });
-    }
+  const existing = await lstatOrMissing(fs, entry.path);
+  if (existing !== undefined && !existing.isFile) {
+    await fs.rm(entry.path, { force: true, recursive: true });
   }
   await fs.writeFile(entry.path, body);
 };
 
 const sameSymlink = async (fs: IFileSystem, path: string, target: string): Promise<boolean> => {
-  if (!(await fs.exists(path))) {
-    return false;
-  }
-  const stat = await fs.lstat(path);
-  return stat.isSymbolicLink && (await fs.readlink(path)) === target;
+  const stat = await lstatOrMissing(fs, path);
+  return stat?.isSymbolicLink === true && (await fs.readlink(path)) === target;
 };
 
-const replacePath = async (fs: IFileSystem, path: string): Promise<void> => {
-  if (await fs.exists(path)) {
+const removePath = async (fs: IFileSystem, path: string): Promise<void> => {
+  if ((await lstatOrMissing(fs, path)) !== undefined) {
     await fs.rm(path, { force: true, recursive: true });
+  }
+};
+
+const lstatOrMissing = async (
+  fs: IFileSystem,
+  path: string,
+): Promise<Awaited<ReturnType<IFileSystem['lstat']>> | undefined> => {
+  try {
+    return await fs.lstat(path);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('ENOENT:')) {
+      return undefined;
+    }
+    throw error;
   }
 };

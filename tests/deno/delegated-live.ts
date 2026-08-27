@@ -11,7 +11,6 @@ import { assert, errorCode, subjectFrom } from './runtime.ts';
 export const proveDelegatedAccess = async (input: {
   readonly bucket: string;
   readonly firstToken: string;
-  readonly publishableKey: string;
   readonly secondToken: string;
   readonly serviceRoleKey: string;
   readonly supabaseUrl: string;
@@ -27,7 +26,6 @@ export const proveDelegatedAccess = async (input: {
   const workspace = await Supabash.openDelegated({
     bucket: input.bucket,
     capability: valid,
-    publishableKey: input.publishableKey,
     serviceRoleKey: input.serviceRoleKey,
     supabaseUrl: input.supabaseUrl,
     verifier: verifierFor(input, keys.publicKey),
@@ -46,7 +44,6 @@ export const proveDelegatedAccess = async (input: {
     Supabash.openDelegated({
       bucket: input.bucket,
       capability: expired,
-      publishableKey: input.publishableKey,
       serviceRoleKey: input.serviceRoleKey,
       supabaseUrl: input.supabaseUrl,
       verifier: verifierFor(input, keys.publicKey),
@@ -60,7 +57,6 @@ export const proveDelegatedAccess = async (input: {
     Supabash.openDelegated({
       bucket: input.bucket,
       capability: forged,
-      publishableKey: input.publishableKey,
       serviceRoleKey: input.serviceRoleKey,
       supabaseUrl: input.supabaseUrl,
       verifier: verifierFor(input, keys.publicKey),
@@ -77,7 +73,6 @@ export const proveDelegatedAccess = async (input: {
   const other = await Supabash.openDelegated({
     bucket: input.bucket,
     capability: wrongScope,
-    publishableKey: input.publishableKey,
     serviceRoleKey: input.serviceRoleKey,
     supabaseUrl: input.supabaseUrl,
     verifier: verifierFor(input, keys.publicKey),

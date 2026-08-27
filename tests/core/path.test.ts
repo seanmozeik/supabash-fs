@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'vitest';
 
 import { SupabashError } from '../../src/api/errors.ts';
-import { moveDescendant, normalizeVirtualPath, relativeObjectPath } from '../../src/core/path.ts';
+import {
+  moveDescendant,
+  normalizeVirtualPath,
+  parentVirtualPath,
+  relativeObjectPath,
+} from '../../src/core/path.ts';
 
 describe('virtual paths', () => {
   test('normalizes paths without allowing a root escape', () => {
@@ -29,5 +34,10 @@ describe('virtual paths', () => {
 
   test('does not map the virtual root to an object', () => {
     expect(() => relativeObjectPath('/')).toThrow(SupabashError);
+  });
+
+  test('returns the parent of a root-level path as the mounted root', () => {
+    expect(parentVirtualPath('/alias.md')).toBe('/');
+    expect(parentVirtualPath('/docs/guides/readme.md')).toBe('/docs/guides');
   });
 });

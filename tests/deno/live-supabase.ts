@@ -148,14 +148,7 @@ const escapedDownload = await secondClient.storage
   .download(`${firstUserId}/notes/alpha.md`);
 assert(escapedDownload.error !== null, 'Storage RLS allowed a cross-user download.');
 
-await proveDelegatedAccess({
-  bucket,
-  firstToken,
-  publishableKey,
-  secondToken,
-  serviceRoleKey,
-  supabaseUrl,
-});
+await proveDelegatedAccess({ bucket, firstToken, secondToken, serviceRoleKey, supabaseUrl });
 
 const cleanupFirst = await open(firstToken);
 for (const path of ['/current', '/notes.md', '/delegated.md', '/notes']) {

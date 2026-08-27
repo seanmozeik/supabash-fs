@@ -10,9 +10,6 @@ export type ResolvedPath =
 const HOME_PATH_PATTERN = /^(?:~|\$home|\$\{home\})(?:\/|$)/iu;
 
 export const resolveCommandPath = (input: string, cwd: string): ResolvedPath => {
-  if (input.includes('\\') || hasControlCharacter(input)) {
-    return deny('ambiguous-path', 'Path contains ambiguous separator or control characters.');
-  }
   if (HOME_PATH_PATTERN.test(input)) {
     return deny('path-out-of-root', 'Home-directory paths are outside the mounted root.');
   }
@@ -65,9 +62,3 @@ const deny = (code: PolicyReasonCode, reason: string): ResolvedPath => ({
   decision: denyPolicy(code, reason),
   kind: 'deny',
 });
-
-const hasControlCharacter = (input: string): boolean =>
-  Array.from(input).some((character) => {
-    const codePoint = character.codePointAt(0);
-    return codePoint !== undefined && (codePoint <= 31 || codePoint === 127);
-  });

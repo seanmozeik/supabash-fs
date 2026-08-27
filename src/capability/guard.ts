@@ -14,7 +14,7 @@ import type {
   RevisionDiff,
   RevisionDiffInput,
 } from '../api/history.js';
-import { readOnlyFileSystem } from './readonly-fs.js';
+import { restrictFileSystem } from './readonly-fs.js';
 
 export const guardWorkspace = (
   workspace: Workspace,
@@ -40,65 +40,64 @@ class GuardedWorkspace implements Workspace {
     this.operations = operations;
     this.actor = actor;
     this.correlationId = correlationId;
-    this.fs = operations.has('write') ? inner.fs : readOnlyFileSystem(inner.fs);
+    this.fs = restrictFileSystem(inner.fs, filesystemAccess(operations));
   }
 
   changes(): readonly WorkspaceChange[] {
-    this.assert('read');
+    this.assertOneOf('read', 'write');
     return this.inner.changes();
   }
 
-  async checkpoint(options?: CheckpointOptions): Promise<CheckpointReceipt> {
-    this.assert('checkpoint');
-    const receipt = await this.inner.checkpoint(options);
-    return receipt;
+  checkpoint(options?: CheckpointOptions): Promise<CheckpointReceipt> {
+    return this.allow('checkpoint', () => this.inner.checkpoint(options));
   }
 
-  async commit(options: CommitOptions = {}): Promise<CommitReceipt> {
-    this.assert('commit');
-    const receipt = await this.inner.commit({
-      context: options.context ?? { actor: this.actor, correlationId: this.correlationId },
-    });
-    return receipt;
+  commit(options: CommitOptions = {}): Promise<CommitReceipt> {
+    return this.allow('commit', () =>
+      this.inner.commit({
+        context: { ...options.context, actor: this.actor, correlationId: this.correlationId },
+      }),
+    );
   }
 
-  async discard(): Promise<void> {
-    this.assert('write');
-    await this.inner.discard();
+  discard(): Promise<void> {
+    return this.allow('write', () => this.inner.discard());
   }
 
-  async diff(input: RevisionDiffInput): Promise<RevisionDiff> {
-    this.assert('history');
-    const diff = await this.inner.diff(input);
-    return diff;
+  diff(input: RevisionDiffInput): Promise<RevisionDiff> {
+    return this.allow('history', () => this.inner.diff(input));
   }
 
-  async history(query?: HistoryQuery): Promise<HistoryPage> {
-    this.assert('history');
-    const page = await this.inner.history(query);
-    return page;
+  history(query?: HistoryQuery): Promise<HistoryPage> {
+    return this.allow('history', () => this.inner.history(query));
   }
 
-  async purge(options: PurgeOptions): Promise<PurgeReceipt> {
-    this.assert('purge');
-    const receipt = await this.inner.purge(options);
-    return receipt;
+  purge(options: PurgeOptions): Promise<PurgeReceipt> {
+    return this.allow('purge', () => this.inner.purge(options));
   }
 
-  async readRevision(revision: string): Promise<ReadonlyWorkspaceView> {
-    this.assert('history');
-    const view = await this.inner.readRevision(revision);
-    return view;
+  readRevision(revision: string): Promise<ReadonlyWorkspaceView> {
+    return this.allow('history', () => this.inner.readRevision(revision));
   }
 
-  async restore(revision: string): Promise<RestorePlan> {
-    this.assert('restore');
-    const plan = await this.inner.restore(revision);
-    return plan;
+  restore(revision: string): Promise<RestorePlan> {
+    return this.allow('restore', () => this.inner.restore(revision));
   }
 
-  private assert(operation: DelegatedOperation): void {
-    if (!this.operations.has(operation)) {
+  private allow<T>(operation: DelegatedOperation, work: () => Promise<T>): Promise<T> {
+    try {
+      this.assertOneOf(operation);
+    } catch (error) {
+      if (!(error instanceof SupabashError)) {
+        throw error;
+      }
+      return Promise.reject(error);
+    }
+    return work();
+  }
+
+  private assertOneOf(...operations: readonly DelegatedOperation[]): void {
+    if (!operations.some((operation) => this.operations.has(operation))) {
       throw new SupabashError(
         'AUTHORIZATION',
         'Delegated capability does not allow this workspace operation.',
@@ -106,3 +105,15 @@ class GuardedWorkspace implements Workspace {
     }
   }
 }
+
+const filesystemAccess = (
+  operations: ReadonlySet<DelegatedOperation>,
+): 'none' | 'read' | 'write' => {
+  if (operations.has('write')) {
+    return 'write';
+  }
+  if (operations.has('read')) {
+    return 'read';
+  }
+  return 'none';
+};

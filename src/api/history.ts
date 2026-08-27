@@ -1,7 +1,6 @@
 import type { WorkspaceChange, WorkspaceEntryKind } from './contracts.js';
 
 export interface CheckpointOptions {
-  readonly commitStaged?: boolean;
   readonly idempotencyKey?: string;
   readonly label?: string;
   readonly retentionClass?: string;

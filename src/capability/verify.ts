@@ -5,7 +5,7 @@ import {
 } from '../api/capability.js';
 import { SupabashError } from '../api/errors.js';
 import { assertClaimSchema, parseClaims } from './claims.js';
-import { jwsKeyId, verifyCompactJws } from './jws.js';
+import { jwsKeyId, peekCompactJwsHeader, verifyCompactJws } from './jws.js';
 
 export const verifyDelegatedCapability = async (
   input: VerifyDelegatedCapabilityInput,
@@ -25,7 +25,7 @@ export const verifyDelegatedCapability = async (
 const verifyInner = async (
   input: VerifyDelegatedCapabilityInput,
 ): Promise<DelegatedCapabilityClaims> => {
-  const unverifiedHeader = peekHeader(input.capability);
+  const unverifiedHeader = peekCompactJwsHeader(input.capability);
   const keyId = jwsKeyId(unverifiedHeader);
   const publicKey = input.verifier.publicKeys[keyId];
   if (publicKey?.type !== 'public') {
@@ -40,26 +40,6 @@ const verifyInner = async (
   assertAudience(claims, input.verifier);
   await assertFresh(claims, input);
   return claims;
-};
-
-const peekHeader = (capability: string): Record<string, unknown> => {
-  const [header] = capability.split('.');
-  if (header === undefined || header.length === 0) {
-    throw new SupabashError('INVALID_CAPABILITY', 'Capability is not a compact JWS.');
-  }
-  try {
-    const decoded = JSON.parse(atob(header.replaceAll('-', '+').replaceAll('_', '/'))) as unknown;
-    if (typeof decoded !== 'object' || decoded === null) {
-      throw new Error('header');
-    }
-    const result: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(decoded)) {
-      result[key] = entry;
-    }
-    return result;
-  } catch {
-    throw new SupabashError('INVALID_CAPABILITY', 'Capability header is not valid JSON.');
-  }
 };
 
 const assertAudience = (

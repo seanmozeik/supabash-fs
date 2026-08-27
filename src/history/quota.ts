@@ -2,7 +2,9 @@ import { SupabashError } from '../api/errors.js';
 import type { JsonValue } from '../api/json.js';
 import type { UploadEntry } from '../core/storage.js';
 import {
+  DEFAULT_MAX_DIFF_PREVIEW_BYTES,
   DEFAULT_MAX_FILE_SIZE,
+  DEFAULT_MAX_HISTORY_PAGE_SIZE,
   DEFAULT_MAX_PATH_LENGTH,
   DEFAULT_MAX_STAGED_BYTES,
   DEFAULT_MAX_TRANSACTION_METADATA_BYTES,
@@ -53,3 +55,33 @@ const quota = (message: string, path?: string): SupabashError =>
   path === undefined
     ? new SupabashError('QUOTA_EXCEEDED', message)
     : new SupabashError('QUOTA_EXCEEDED', message, { path });
+
+export const historyPageLimit = (
+  requested: number | undefined,
+  limits: WorkspaceLimits,
+): number => {
+  const maxPage = Math.min(
+    limits.maxHistoryPageSize ?? DEFAULT_MAX_HISTORY_PAGE_SIZE,
+    DEFAULT_MAX_HISTORY_PAGE_SIZE,
+  );
+  const limit = requested ?? maxPage;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > maxPage) {
+    throw quota('History page size is outside the allowed range.');
+  }
+  return limit;
+};
+
+export const diffPreviewLimit = (
+  requested: number | undefined,
+  limits: WorkspaceLimits,
+): number => {
+  const maxPreview = Math.min(
+    limits.maxDiffPreviewBytes ?? DEFAULT_MAX_DIFF_PREVIEW_BYTES,
+    DEFAULT_MAX_DIFF_PREVIEW_BYTES,
+  );
+  const previewBytes = requested ?? maxPreview;
+  if (!Number.isSafeInteger(previewBytes) || previewBytes < 0 || previewBytes > maxPreview) {
+    throw quota('Diff preview size is outside the allowed range.');
+  }
+  return previewBytes;
+};

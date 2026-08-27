@@ -1,6 +1,4 @@
-export const DEFAULT_MAX_COMMAND_LENGTH = 32_768;
 export const DEFAULT_MAX_BASH_OUTPUT = 262_144;
-export const DEFAULT_MAX_TOOL_EXECUTION_MS = 30_000;
 export const DEFAULT_MAX_IMAGE_BYTES = 5_242_880;
 export const TRUNCATION_MARKER = '\n[truncated]\n';
 

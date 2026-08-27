@@ -5,6 +5,7 @@ import type { Workspace } from '../api/contracts.js';
 import { SupabashError } from '../api/errors.js';
 import { sha256 } from '../core/hash.js';
 import { createStorageWorkspace } from '../core/workspace.js';
+import { jwtRole } from '../supabase/jwt.js';
 import { createSupabaseStorage } from '../supabase/storage.js';
 import { guardWorkspace } from './guard.js';
 import { verifyDelegatedCapability } from './verify.js';
@@ -49,22 +50,4 @@ const assertServiceRoleKey = (key: string): void => {
     'AUTHORIZATION',
     'Delegated access requires a trusted service-role credential.',
   );
-};
-
-const jwtRole = (token: string): string | undefined => {
-  const [, payload] = token.split('.');
-  if (payload === undefined) {
-    return undefined;
-  }
-  try {
-    const decoded: unknown = JSON.parse(atob(payload.replaceAll('-', '+').replaceAll('_', '/')));
-    return typeof decoded === 'object' &&
-      decoded !== null &&
-      'role' in decoded &&
-      typeof decoded.role === 'string'
-      ? decoded.role
-      : undefined;
-  } catch {
-    return undefined;
-  }
 };

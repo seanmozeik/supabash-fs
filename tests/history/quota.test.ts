@@ -24,6 +24,15 @@ describe('workspace commit quotas', () => {
       }),
     ).rejects.toMatchObject(quotaError());
   });
+
+  test('rejects a history page larger than the configured limit', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage(), {
+      limits: { maxHistoryPageSize: 1 },
+    });
+    await workspace.fs.writeFile('/notes.md', 'ok\n');
+    await workspace.commit();
+    await expect(workspace.history({ limit: 2 })).rejects.toMatchObject(quotaError());
+  });
 });
 
 const quotaError = (): Partial<SupabashError> => ({ code: 'QUOTA_EXCEEDED' });

@@ -1,4 +1,3 @@
-import type { WorkspaceChange } from '../api/contracts.js';
 import { SupabashError } from '../api/errors.js';
 import type {
   RevisionDiff,
@@ -9,8 +8,9 @@ import type {
 import type { HistoryBlobStore } from './blob-store.js';
 import { readJson } from './json-io.js';
 import { historyKey } from './keys.js';
-import { DEFAULT_MAX_DIFF_PREVIEW_BYTES } from './limits.js';
+import type { WorkspaceLimits } from './limits.js';
 import { parseCheckpoint, parseRevision } from './parse.js';
+import { diffPreviewLimit } from './quota.js';
 
 export interface StagedDiffState {
   readonly entries: readonly RevisionEntry[];
@@ -21,14 +21,12 @@ export const diffRevisions = async (
   history: HistoryBlobStore,
   input: RevisionDiffInput,
   staged?: StagedDiffState,
+  limits: WorkspaceLimits = {},
 ): Promise<RevisionDiff> => {
   const fromState = await resolveRef(history, input.from, staged);
   const toState = await resolveRef(history, input.to, staged);
   const paths = input.paths === undefined ? undefined : new Set(input.paths);
-  const previewBytes = input.previewBytes ?? DEFAULT_MAX_DIFF_PREVIEW_BYTES;
-  if (previewBytes > DEFAULT_MAX_DIFF_PREVIEW_BYTES) {
-    throw new SupabashError('QUOTA_EXCEEDED', 'Diff preview size is outside the allowed range.');
-  }
+  diffPreviewLimit(input.previewBytes, limits);
   const fromMap = new Map(fromState.entries.map((entry) => [entry.path, entry]));
   const toMap = new Map(toState.entries.map((entry) => [entry.path, entry]));
   const allPaths = [...new Set([...fromMap.keys(), ...toMap.keys()])].toSorted();
@@ -39,28 +37,6 @@ export const diffRevisions = async (
     }
   }
   return { entries, fromRevision: fromState.label, toRevision: toState.label };
-};
-
-export const changesAsEntries = (changes: readonly WorkspaceChange[]): readonly RevisionEntry[] =>
-  changes.filter((change) => change.kind === 'upsert').map((change) => revisionFromChange(change));
-
-const revisionFromChange = (change: WorkspaceChange): RevisionEntry => {
-  const contentHash = change.afterHash;
-  if (contentHash === undefined) {
-    return {
-      entryKind: change.entryKind,
-      mode: 0o644,
-      path: change.path,
-      size: change.afterSize ?? 0,
-    };
-  }
-  return {
-    entryKind: change.entryKind,
-    mode: 0o644,
-    path: change.path,
-    size: change.afterSize ?? 0,
-    contentHash,
-  };
 };
 
 const resolveRef = async (

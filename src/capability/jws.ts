@@ -1,4 +1,5 @@
 import type { DelegatedCapabilityClaims } from '../api/capability.js';
+import { asUnknownRecord } from '../api/json.js';
 
 const text = new TextEncoder();
 const json = new TextDecoder();
@@ -44,6 +45,11 @@ export const jwsKeyId = (header: Record<string, unknown>): string => {
   return keyId;
 };
 
+export const peekCompactJwsHeader = (capability: string): Record<string, unknown> => {
+  const [headerPart] = splitCompact(capability);
+  return parseJsonObject(b64urlToJson(headerPart));
+};
+
 const splitCompact = (capability: string): readonly [string, string, string] => {
   const parts = capability.split('.');
   if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
@@ -57,14 +63,11 @@ const b64urlJson = (value: unknown): string => bytesToB64url(text.encode(JSON.st
 const b64urlToJson = (value: string): unknown => JSON.parse(json.decode(b64urlToBytes(value)));
 
 const parseJsonObject = (value: unknown): Record<string, unknown> => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  const record = asUnknownRecord(value);
+  if (record === undefined) {
     throw new Error('JWS header is not an object.');
   }
-  const result: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    result[key] = entry;
-  }
-  return result;
+  return record;
 };
 
 const bytesToB64url = (bytes: Uint8Array): string => {

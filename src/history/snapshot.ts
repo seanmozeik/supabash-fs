@@ -6,6 +6,21 @@ import type { HistoryBlobStore } from './blob-store.js';
 import { readBytes, writeBytes } from './json-io.js';
 import { historyKey } from './keys.js';
 
+export const overlayByPath = <T extends { readonly path: string }>(
+  baseline: readonly T[],
+  deletions: readonly { readonly path: string }[],
+  upserts: readonly T[],
+): T[] => {
+  const next = new Map(baseline.map((entry) => [entry.path, entry]));
+  for (const deleted of deletions) {
+    next.delete(deleted.path);
+  }
+  for (const uploaded of upserts) {
+    next.set(uploaded.path, uploaded);
+  }
+  return [...next.values()];
+};
+
 export const revisionEntriesFrom = async (
   baseline: readonly RemoteEntry[],
   deletions: readonly RemoteEntry[],
@@ -13,15 +28,9 @@ export const revisionEntriesFrom = async (
   storage: ScopedStorage,
   history: HistoryBlobStore,
 ): Promise<readonly RevisionEntry[]> => {
-  const next = new Map(baseline.map((entry) => [entry.path, entry]));
-  for (const deleted of deletions) {
-    next.delete(deleted.path);
-  }
-  for (const uploaded of uploads) {
-    next.set(uploaded.path, uploaded);
-  }
+  const next = overlayByPath(baseline, deletions, uploads);
   const entries: RevisionEntry[] = [];
-  const ordered = [...next.values()].toSorted((left, right) => comparePaths(left.path, right.path));
+  const ordered = next.toSorted((left, right) => comparePaths(left.path, right.path));
   for (const entry of ordered) {
     entries.push(await storedEntry(entry, storage, history));
   }
@@ -54,6 +63,12 @@ const ensureObject = async (
     return entry.kind === 'symlink'
       ? sha256(new TextEncoder().encode(entry.target ?? ''))
       : undefined;
+  }
+  if (entry.contentHash !== undefined) {
+    const existing = await readBytes(history, historyKey.object(entry.contentHash));
+    if (existing !== undefined) {
+      return entry.contentHash;
+    }
   }
   const body = await storage.download(entry);
   const hash = entry.contentHash ?? (await sha256(body));

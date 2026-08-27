@@ -3,6 +3,7 @@ import type { CommitReceipt, WorkspaceChange } from '../api/contracts.js';
 import { SupabashError } from '../api/errors.js';
 import type { RemoteEntry, ScopedStorage } from '../core/storage.js';
 import type { HistoryBlobStore } from './blob-store.js';
+import { parseHistoryObject, requiredString } from './fields.js';
 import { readJson, writeJson } from './json-io.js';
 import { historyKey } from './keys.js';
 import { parseComplete, parseHead } from './parse.js';
@@ -133,19 +134,11 @@ export const withLease = async <T>(
 };
 
 const parseIdempotency = (value: unknown): IdempotencyRecord => {
-  if (typeof value !== 'object' || value === null) {
-    throw new SupabashError('HISTORY_CORRUPTION', 'Idempotency record is not an object.');
-  }
-  if (!('transactionId' in value) || typeof value.transactionId !== 'string') {
-    throw new SupabashError('HISTORY_CORRUPTION', 'Idempotency record is missing a transaction.');
-  }
-  if (!('revision' in value) || typeof value.revision !== 'string') {
-    throw new SupabashError('HISTORY_CORRUPTION', 'Idempotency record is missing a revision.');
-  }
+  const record = parseHistoryObject(value);
   return {
-    revision: value.revision,
+    revision: requiredString(record, 'revision'),
     schemaVersion: currentSchema(),
-    transactionId: value.transactionId,
+    transactionId: requiredString(record, 'transactionId'),
   };
 };
 

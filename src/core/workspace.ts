@@ -28,6 +28,7 @@ import { readHistoryPage } from '../history/query.js';
 import { assertCommitQuotas } from '../history/quota.js';
 import { readRevisionView } from '../history/readonly.js';
 import { planRestore } from '../history/restore.js';
+import { overlayByPath } from '../history/snapshot.js';
 import { mapInBatches } from './batches.js';
 import { contentTypeForPath } from './content-type.js';
 import { comparePaths } from './entry-order.js';
@@ -93,12 +94,8 @@ class StorageWorkspace implements Workspace {
     ].toSorted((left, right) => comparePaths(left.path, right.path));
   }
 
-  async checkpoint(options: CheckpointOptions = {}): Promise<CheckpointReceipt> {
-    const { commitStaged, ...marker } = options;
-    if (commitStaged === true) {
-      await this.commit();
-    }
-    return createCheckpoint(this.storage.history, marker);
+  checkpoint(options: CheckpointOptions = {}): Promise<CheckpointReceipt> {
+    return createCheckpoint(this.storage.history, options);
   }
 
   async commit(options: CommitOptions = {}): Promise<CommitReceipt> {
@@ -154,14 +151,16 @@ class StorageWorkspace implements Workspace {
   }
 
   async diff(input: RevisionDiffInput): Promise<RevisionDiff> {
-    return diffRevisions(this.storage.history, input, {
-      entries: await this.stagedEntries(),
-      label: 'staged',
-    });
+    return diffRevisions(
+      this.storage.history,
+      input,
+      { entries: await this.stagedEntries(), label: 'staged' },
+      this.limits,
+    );
   }
 
   history(query?: HistoryQuery): Promise<HistoryPage> {
-    return readHistoryPage(this.storage.history, this.scope, query);
+    return readHistoryPage(this.storage.history, this.scope, query, this.limits);
   }
 
   purge(options: PurgeOptions): Promise<PurgeReceipt> {
@@ -191,14 +190,10 @@ class StorageWorkspace implements Workspace {
 
   private async stagedEntries(): Promise<readonly RevisionEntry[]> {
     const pending = this.fs.pendingPreview();
-    const deleted = new Set(pending.deletions.map((entry) => entry.path));
-    const entries: RevisionEntry[] = this.fs
-      .baselineEntries()
-      .filter((entry) => !deleted.has(entry.path))
-      .map((entry) => remoteAsRevision(entry));
+    const upserts: RevisionEntry[] = [];
     for (const path of pending.upserts) {
       const draft = await this.fs.uploadEntry(path);
-      entries.push({
+      upserts.push({
         entryKind: draft.kind,
         mode: draft.mode,
         path: draft.path,
@@ -207,7 +202,11 @@ class StorageWorkspace implements Workspace {
         ...(draft.target !== undefined && { target: draft.target }),
       });
     }
-    return entries;
+    return overlayByPath(
+      this.fs.baselineEntries().map((entry) => remoteAsRevision(entry)),
+      pending.deletions,
+      upserts,
+    );
   }
 
   private async assertNoConflicts(

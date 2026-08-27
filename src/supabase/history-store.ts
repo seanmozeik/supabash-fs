@@ -1,7 +1,7 @@
 import { SupabashError } from '../api/errors.js';
 import type { HistoryBlobStore } from '../history/blob-store.js';
 import { HISTORY_ROOT, assertHistoryKey } from '../history/keys.js';
-import { listedStorageKey } from './listed-key.js';
+import { listObjectKeys } from './list-objects.js';
 
 type BucketApi = {
   readonly download: (key: string) => Promise<{ data: Blob | null; error: unknown }>;
@@ -10,7 +10,6 @@ type BucketApi = {
     extra?: { cache?: RequestCache },
   ) => Promise<{
     data: {
-      folders?: readonly { name: string }[];
       hasNext: boolean;
       nextCursor?: string;
       objects: readonly { key?: string; name: string }[];
@@ -25,7 +24,6 @@ type BucketApi = {
   ) => Promise<{ error: unknown }>;
 };
 
-const LIST_PAGE_SIZE = 1000;
 const REMOVE_BATCH = 1000;
 
 export class SupabaseHistoryStore implements HistoryBlobStore {
@@ -74,43 +72,8 @@ export class SupabaseHistoryStore implements HistoryBlobStore {
 
   async list(prefix: string): Promise<readonly string[]> {
     assertHistoryKey(prefix.endsWith('/') ? `${prefix}x` : prefix);
-    const keys: string[] = [];
-    const prefixes = [`${this.root}${prefix}`];
-    const seen = new Set<string>();
-    while (prefixes.length > 0) {
-      const current = prefixes.pop() ?? '';
-      if (current.length > 0 && !seen.has(current)) {
-        seen.add(current);
-        await this.collect(current, keys, prefixes);
-      }
-    }
-    return keys;
-  }
-
-  private async collect(storagePrefix: string, keys: string[], prefixes: string[]): Promise<void> {
-    let cursor: string | undefined;
-    do {
-      const response = await this.bucket.listV2(
-        { ...(cursor !== undefined && { cursor }), limit: LIST_PAGE_SIZE, prefix: storagePrefix },
-        { cache: 'no-store' },
-      );
-      if (response.error !== null || response.data === null) {
-        throw storageFailure('history-list', response.error);
-      }
-      for (const folder of response.data.folders ?? []) {
-        const name = folder.name.replace(/^\/+/u, '').replace(/\/+$/u, '');
-        if (name.length > 0) {
-          prefixes.push(folderPrefix(storagePrefix, name));
-        }
-      }
-      for (const object of response.data.objects) {
-        const key = listedStorageKey(storagePrefix, object);
-        if (key.startsWith(this.root)) {
-          keys.push(key.slice(this.root.length));
-        }
-      }
-      cursor = response.data.hasNext ? response.data.nextCursor : undefined;
-    } while (cursor !== undefined);
+    const keys = await listObjectKeys(this.bucket, `${this.root}${prefix}`, this.root);
+    return keys.map((key) => key.slice(this.root.length));
   }
 
   private storageKey(key: string): string {
@@ -122,14 +85,6 @@ export class SupabaseHistoryStore implements HistoryBlobStore {
     return storageKey;
   }
 }
-
-const folderPrefix = (parent: string, name: string): string => {
-  if (name.startsWith(parent)) {
-    return name.endsWith('/') ? name : `${name}/`;
-  }
-  const base = parent.endsWith('/') ? parent : `${parent}/`;
-  return `${base}${name}/`;
-};
 
 const isNotFound = (error: unknown): boolean => {
   if (typeof error !== 'object' || error === null) {

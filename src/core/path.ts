@@ -74,6 +74,15 @@ export const parentPaths = (path: string): readonly string[] => {
   return segments.slice(0, -1).map((_, index) => `/${segments.slice(0, index + 1).join('/')}`);
 };
 
+export const parentVirtualPath = (path: string): string => {
+  const normalized = normalizeVirtualPath(path);
+  if (normalized === ROOT_PATH) {
+    return ROOT_PATH;
+  }
+  const index = normalized.lastIndexOf('/');
+  return index <= 0 ? ROOT_PATH : normalized.slice(0, index);
+};
+
 const absoluteSegments = (input: string): string[] =>
   (input.startsWith(ROOT_PATH) ? input : `/${input}`).split('/');
 

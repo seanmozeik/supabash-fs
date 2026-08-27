@@ -4,18 +4,17 @@ import { comparePaths } from '../core/entry-order.js';
 import type { HistoryBlobStore } from './blob-store.js';
 import { readJson } from './json-io.js';
 import { HISTORY_ROOT, historyKey } from './keys.js';
-import { DEFAULT_MAX_HISTORY_PAGE_SIZE } from './limits.js';
+import type { WorkspaceLimits } from './limits.js';
 import { parseComplete, parseHead } from './parse.js';
+import { historyPageLimit } from './quota.js';
 
 export const readHistoryPage = async (
   history: HistoryBlobStore,
   scope: string,
   query: HistoryQuery = {},
+  limits: WorkspaceLimits = {},
 ): Promise<HistoryPage> => {
-  const limit = query.limit ?? DEFAULT_MAX_HISTORY_PAGE_SIZE;
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > DEFAULT_MAX_HISTORY_PAGE_SIZE) {
-    throw new SupabashError('QUOTA_EXCEEDED', 'History page size is outside the allowed range.');
-  }
+  const limit = historyPageLimit(query.limit, limits);
   const listed = await history.list(`${HISTORY_ROOT}/transactions/`);
   const keys = listed.filter((key) => key.endsWith('/complete.json'));
   const records: HistoryRecord[] = [];

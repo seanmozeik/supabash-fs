@@ -57,6 +57,9 @@ describe('adversarial command policy', () => {
     await expect(policy.inspect('ln -s ../outside.md /other.md')).resolves.toMatchObject({
       code: 'path-out-of-root',
     });
+    await expect(policy.inspect('cd /docs && cat /alias.md')).resolves.toMatchObject({
+      code: 'path-out-of-root',
+    });
   });
 
   test('tracks cd before a relative destructive command', async () => {

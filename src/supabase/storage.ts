@@ -7,7 +7,7 @@ import { normalizeVirtualPath, relativeObjectPath } from '../core/path.js';
 import type { RemoteEntry, ScopedStorage, UploadEntry } from '../core/storage.js';
 import { isHistoryRelative } from '../history/keys.js';
 import { SupabaseHistoryStore } from './history-store.js';
-import { listedStorageKey } from './listed-key.js';
+import { listObjectKeys } from './list-objects.js';
 import {
   contentTypeFor,
   entryFromInfo,
@@ -16,18 +16,12 @@ import {
   type StorageObjectInfo,
 } from './object-metadata.js';
 
-const LIST_PAGE_SIZE = 1000;
 const METADATA_CONCURRENCY = 16;
 const REMOVE_BATCH_SIZE = 1000;
 const SAFE_BUCKET = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/u;
 const SAFE_ROOT_SEGMENT = /^[A-Za-z0-9_-]{1,128}$/u;
 
 type BucketApi = ReturnType<SupabaseClient['storage']['from']>;
-
-interface ListedObject {
-  readonly key?: string;
-  readonly name: string;
-}
 
 export const createSupabaseStorage = (
   client: SupabaseClient,
@@ -50,25 +44,9 @@ class SupabaseStorage implements ScopedStorage {
   }
 
   async list(): Promise<readonly RemoteEntry[]> {
-    const objects: ListedObject[] = [];
-    let cursor: string | undefined;
-    do {
-      const response = await this.bucket.listV2(
-        { ...(cursor !== undefined && { cursor }), limit: LIST_PAGE_SIZE, prefix: this.root },
-        { cache: 'no-store' },
-      );
-      if (response.error !== null) {
-        throw storageFailure('list', response.error);
-      }
-      objects.push(...response.data.objects);
-      cursor = response.data.hasNext ? response.data.nextCursor : undefined;
-      if (response.data.hasNext && cursor === undefined) {
-        throw storageFailure('list', new Error('Supabase omitted the next list cursor.'));
-      }
-    } while (cursor !== undefined);
-
-    const hydrated = await mapInBatches(objects, METADATA_CONCURRENCY, (object) =>
-      this.entryFromList(object),
+    const keys = await listObjectKeys(this.bucket, this.root, this.root);
+    const hydrated = await mapInBatches(keys, METADATA_CONCURRENCY, (key) =>
+      this.entryFromKey(key),
     );
     const entries = new Map<string, RemoteEntry>();
     for (const entry of hydrated) {
@@ -143,8 +121,7 @@ class SupabaseStorage implements ScopedStorage {
     throw storageFailure('head', response.error);
   }
 
-  private async entryFromList(object: ListedObject): Promise<RemoteEntry | undefined> {
-    const key = listedStorageKey(this.root, object);
+  private async entryFromKey(key: string): Promise<RemoteEntry | undefined> {
     const relative = this.relativeKey(key);
     if (isHistoryRelative(relative)) {
       return undefined;

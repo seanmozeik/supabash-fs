@@ -10,7 +10,6 @@ export type {
 export interface BashToolLimits {
   readonly maxBashOutput?: number;
   readonly maxCommandLength?: number;
-  readonly maxToolExecutionMs?: number;
 }
 
 export interface BashToolOptions {

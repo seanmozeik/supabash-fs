@@ -19,6 +19,16 @@ Agent workspace APIs on top of the authenticated Storage filesystem.
 - Prove mixed-tool, history, restore, and delegated isolation against a local
   Supabase Docker stack from Deno 2.
 - Reopen dangling symbolic links without following their missing targets.
+- Restore matches the target tree, including leftover uncommitted paths, and
+  inspects symlink nodes with `lstat`.
+- Delegated jobs bind commit actor/correlation to the capability, require
+  `read` or `write` for filesystem access, and no longer take an unused
+  publishable key.
+- Nested `bash -c` scripts use the same command-policy evaluation as the outer
+  command.
+- Checkpoint names a revision and never publishes staged edits.
+- History page size and diff preview limits are enforced. Commit probes
+  existing content-addressed objects before downloading file bodies.
 
 ## 0.1.0
 

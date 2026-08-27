@@ -258,7 +258,7 @@ await workspace.purge({ dryRun: true, maxRevisions: 50 });
 
 - `changes` returns the current staged set without a durable write.
 - `checkpoint` names the current complete revision. It does not publish staged
-  edits unless `commitStaged: true`.
+  edits.
 - `commit` publishes staged changes and returns an immutable receipt.
 - `discard` drops uncommitted changes only.
 - `history` reads committed transactions with cursor pagination.
@@ -382,7 +382,6 @@ const capability = await createDelegatedCapability({
 const workspace = await Supabash.openDelegated({
   bucket: 'workspaces',
   capability,
-  publishableKey,
   serviceRoleKey,
   supabaseUrl,
   verifier: {
@@ -450,7 +449,6 @@ Documented defaults:
 | `maxPatchSize`                | 1_048_576  |
 | `maxCommandLength`            | 32_768     |
 | `maxBashOutput`               | 262_144    |
-| `maxToolExecutionMs`          | 30_000     |
 | `maxHistoryPageSize`          | 100        |
 | `maxDiffPreviewBytes`         | 8_192      |
 | `maxTransactionMetadataBytes` | 16_384     |

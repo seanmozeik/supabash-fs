@@ -18,7 +18,6 @@ describe('delegated workspace access', () => {
         privateKey: keys.privateKey,
       }),
       fetch: api.fetch,
-      publishableKey: 'sb_publishable_test',
       serviceRoleKey: 'sb_secret_test',
       supabaseUrl: claims.origin,
       verifier: verifierFor(keys.publicKey),
@@ -46,7 +45,6 @@ describe('delegated workspace access', () => {
         bucket: 'other-bucket',
         capability,
         fetch: api.fetch,
-        publishableKey: 'sb_publishable_test',
         serviceRoleKey: 'sb_secret_test',
         supabaseUrl: claims.origin,
         verifier: verifierFor(keys.publicKey),
@@ -57,7 +55,6 @@ describe('delegated workspace access', () => {
         bucket: claims.bucket,
         capability,
         fetch: api.fetch,
-        publishableKey: 'sb_publishable_test',
         serviceRoleKey: 'sb_secret_test',
         supabaseUrl: 'https://other.supabase.co',
         verifier: verifierFor(keys.publicKey),
@@ -77,7 +74,6 @@ describe('delegated workspace access', () => {
         privateKey: keys.privateKey,
       }),
       fetch: api.fetch,
-      publishableKey: 'sb_publishable_test',
       serviceRoleKey: 'sb_secret_test',
       supabaseUrl: claims.origin,
       verifier: verifierFor(keys.publicKey),
@@ -99,7 +95,6 @@ describe('delegated workspace access', () => {
         privateKey: keys.privateKey,
       }),
       fetch: api.fetch,
-      publishableKey: 'sb_publishable_test',
       serviceRoleKey: 'sb_secret_test',
       supabaseUrl: sampleClaims().origin,
       verifier: verifierFor(keys.publicKey),
@@ -114,7 +109,6 @@ describe('delegated workspace access', () => {
         privateKey: keys.privateKey,
       }),
       fetch: api.fetch,
-      publishableKey: 'sb_publishable_test',
       serviceRoleKey: 'sb_secret_test',
       supabaseUrl: sampleClaims().origin,
       verifier: verifierFor(keys.publicKey),
@@ -130,6 +124,43 @@ describe('delegated workspace access', () => {
       parentSecret: 'parent-secret\n',
       storedChild: 'nested\n',
     });
+  });
+
+  test('binds commit attribution to the capability and hides fs without read or write', async () => {
+    const api = new FakeSupabase({});
+    const keys = await ed25519Pair();
+    const writer = await Supabash.openDelegated({
+      bucket: 'workspaces',
+      capability: await createDelegatedCapability({
+        claims: sampleClaims(),
+        keyId: 'k1',
+        privateKey: keys.privateKey,
+      }),
+      fetch: api.fetch,
+      serviceRoleKey: 'sb_secret_test',
+      supabaseUrl: sampleClaims().origin,
+      verifier: verifierFor(keys.publicKey),
+    });
+    await writer.fs.writeFile('/notes.md', 'ok\n');
+    const receipt = await writer.commit({
+      context: { actor: 'spoofed', correlationId: 'spoofed', cause: 'job' },
+    });
+    expect(receipt.actor).toBe('delegated:job-1');
+    expect(receipt.correlationId).toBe('corr-1');
+    const historyOnly = await Supabash.openDelegated({
+      bucket: 'workspaces',
+      capability: await createDelegatedCapability({
+        claims: sampleClaims({ nonce: 'history', ops: ['history'], sub: 'history-job' }),
+        keyId: 'k1',
+        privateKey: keys.privateKey,
+      }),
+      fetch: api.fetch,
+      serviceRoleKey: 'sb_secret_test',
+      supabaseUrl: sampleClaims().origin,
+      verifier: verifierFor(keys.publicKey),
+    });
+    await expect(historyOnly.fs.readFile('/notes.md')).rejects.toMatchObject(authorizationError());
+    expect(() => historyOnly.changes()).toThrow(expect.objectContaining(authorizationError()));
   });
 });
 

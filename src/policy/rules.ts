@@ -21,6 +21,34 @@ import {
 
 const WRAPPER_LIMIT = 4;
 
+export const evaluateCommand = (
+  command: string,
+  options: CommandPolicyOptions,
+  depth = 0,
+): Promise<CommandInspectDecision> => {
+  if (command.length > (options.maxCommandLength ?? DEFAULT_MAX_COMMAND_LENGTH)) {
+    return Promise.resolve(
+      denyPolicy('command-too-long', 'Command exceeds the configured length limit.'),
+    );
+  }
+  const tokens = tokenizeCommand(command);
+  if (!tokens.ok) {
+    return Promise.resolve(tokens.decision);
+  }
+  const segments = segmentsFromTokens(tokens.tokens);
+  if (segments.length > (options.maxSegments ?? DEFAULT_MAX_SEGMENTS)) {
+    return Promise.resolve(
+      denyPolicy('too-many-segments', 'Command has too many chained segments.'),
+    );
+  }
+  if (pipelineDepth(segments) > (options.maxPipelineDepth ?? DEFAULT_MAX_PIPELINE_DEPTH)) {
+    return Promise.resolve(
+      denyPolicy('pipeline-too-deep', 'Pipeline exceeds the configured depth limit.'),
+    );
+  }
+  return evaluateSegments(segments, options, depth);
+};
+
 export const evaluateSegments = async (
   segments: readonly CommandSegment[],
   options: CommandPolicyOptions,
@@ -92,41 +120,13 @@ const evaluateSegment = async (
     return denyPolicy('unsupported-syntax', 'bash -c is missing a script.');
   }
   if (nested !== undefined && 'script' in nested) {
-    return inspectNested(nested.script, options, depth + 1);
+    return evaluateCommand(nested.script, options, depth + 1);
   }
   const paths = await checkSegmentPaths(segment, cwd, options);
   if (!paths.allow) {
     return paths;
   }
   return checkDestructive(segment, cwd, options);
-};
-
-const inspectNested = (
-  command: string,
-  options: CommandPolicyOptions,
-  depth: number,
-): Promise<CommandInspectDecision> => {
-  if (command.length > (options.maxCommandLength ?? DEFAULT_MAX_COMMAND_LENGTH)) {
-    return Promise.resolve(
-      denyPolicy('command-too-long', 'Command exceeds the configured length limit.'),
-    );
-  }
-  const tokens = tokenizeCommand(command);
-  if (!tokens.ok) {
-    return Promise.resolve(tokens.decision);
-  }
-  const segments = segmentsFromTokens(tokens.tokens);
-  if (segments.length > (options.maxSegments ?? DEFAULT_MAX_SEGMENTS)) {
-    return Promise.resolve(
-      denyPolicy('too-many-segments', 'Command has too many chained segments.'),
-    );
-  }
-  if (pipelineDepth(segments) > (options.maxPipelineDepth ?? DEFAULT_MAX_PIPELINE_DEPTH)) {
-    return Promise.resolve(
-      denyPolicy('pipeline-too-deep', 'Pipeline exceeds the configured depth limit.'),
-    );
-  }
-  return evaluateSegments(segments, options, depth);
 };
 
 const unwrapSegment = (
@@ -183,15 +183,10 @@ const nestedShell = (
   if (segment.head !== 'bash' && segment.head !== 'sh') {
     return undefined;
   }
-  for (const [index, token] of segment.tokens.entries()) {
-    if (index > 0) {
-      const isCommandFlag =
-        token === '-c' || (token.startsWith('-') && !token.startsWith('--') && token.includes('c'));
-      if (isCommandFlag) {
-        const script = segment.tokens[index + 1];
-        return script === undefined ? { missing: true } : { script };
-      }
-    }
+  const scriptIndex = segment.tokens.indexOf('-c');
+  if (scriptIndex === -1) {
+    return undefined;
   }
-  return undefined;
+  const script = segment.tokens[scriptIndex + 1];
+  return script === undefined ? { missing: true } : { script };
 };

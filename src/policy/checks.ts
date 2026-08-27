@@ -1,3 +1,4 @@
+import { parentVirtualPath } from '../core/path.js';
 import { isRootTarget, resolveCommandPath, type ResolvedPath } from './paths.js';
 import { hasShortFlag, isFlag, type CommandSegment } from './segments.js';
 import {
@@ -91,14 +92,13 @@ const checkResolved = (
     );
   }
   if (resolved.kind === 'path') {
-    return checkSymlink(resolved.value, cwd, options.fs);
+    return checkSymlink(resolved.value, options.fs);
   }
   return Promise.resolve(allowPolicy());
 };
 
 const checkSymlink = async (
   path: string,
-  cwd: string,
   fs: CommandPolicyFileSystem | undefined,
 ): Promise<CommandInspectDecision> => {
   if (fs === undefined) {
@@ -110,7 +110,7 @@ const checkSymlink = async (
       return allowPolicy();
     }
     const target = await fs.readlink(path);
-    const resolved = resolveCommandPath(target, parentDirectory(path, cwd));
+    const resolved = resolveCommandPath(target, parentVirtualPath(path));
     if (resolved.kind === 'deny') {
       return resolved.decision;
     }
@@ -180,14 +180,6 @@ const pathArgs = (segment: CommandSegment): readonly string[] => {
     return segment.args.filter((arg) => arg !== '-c' && !isFlag(arg));
   }
   return segment.args;
-};
-
-const parentDirectory = (path: string, cwd: string): string => {
-  const index = path.lastIndexOf('/');
-  if (index <= 0) {
-    return cwd;
-  }
-  return path.slice(0, index);
 };
 
 const isMode = (value: string): boolean =>

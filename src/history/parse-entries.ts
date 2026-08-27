@@ -1,6 +1,7 @@
-import type { WorkspaceChange, WorkspaceEntryKind } from '../api/contracts.js';
+import type { WorkspaceChange, WorkspaceChangeKind, WorkspaceEntryKind } from '../api/contracts.js';
 import { SupabashError } from '../api/errors.js';
 import type { RevisionEntry } from '../api/history.js';
+import { parseHistoryObject, optionalString, requiredNumber, requiredString } from './fields.js';
 
 export const parseRevisionEntries = (value: unknown): readonly RevisionEntry[] => {
   if (!Array.isArray(value)) {
@@ -17,12 +18,18 @@ export const parseChanges = (value: unknown): readonly WorkspaceChange[] => {
 };
 
 const parseRevisionEntry = (value: unknown): RevisionEntry => {
-  const record = asObject(value);
+  const record = parseHistoryObject(value);
   const contentHash = optionalString(record, 'contentHash');
   const etag = optionalString(record, 'etag');
   const target = optionalString(record, 'target');
+  const entryKind = parseKind(record['entryKind']);
+  if (entryKind === 'symlink' && target === undefined) {
+    throw new SupabashError('HISTORY_CORRUPTION', 'Symlink revision is missing a target.', {
+      path: requiredString(record, 'path'),
+    });
+  }
   return {
-    entryKind: parseKind(record['entryKind']),
+    entryKind,
     mode: requiredNumber(record, 'mode'),
     path: requiredString(record, 'path'),
     size: requiredNumber(record, 'size'),
@@ -33,14 +40,14 @@ const parseRevisionEntry = (value: unknown): RevisionEntry => {
 };
 
 const parseChange = (value: unknown): WorkspaceChange => {
-  const record = asObject(value);
+  const record = parseHistoryObject(value);
   const contentHash = optionalString(record, 'contentHash');
   const etag = optionalString(record, 'etag');
   const beforeHash = optionalString(record, 'beforeHash');
   const afterHash = optionalString(record, 'afterHash');
   return {
     entryKind: parseKind(record['entryKind']),
-    kind: record['kind'] === 'delete' ? 'delete' : 'upsert',
+    kind: parseChangeKind(record['kind']),
     path: requiredString(record, 'path'),
     ...(afterHash !== undefined && { afterHash }),
     ...(beforeHash !== undefined && { beforeHash }),
@@ -56,34 +63,9 @@ const parseKind = (value: unknown): WorkspaceEntryKind => {
   throw new SupabashError('HISTORY_CORRUPTION', 'History record has an invalid entry kind.');
 };
 
-const asObject = (value: unknown): Record<string, unknown> => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new SupabashError('HISTORY_CORRUPTION', 'History record is not an object.');
+const parseChangeKind = (value: unknown): WorkspaceChangeKind => {
+  if (value === 'delete' || value === 'upsert') {
+    return value;
   }
-  const result: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    result[key] = entry;
-  }
-  return result;
-};
-
-const requiredString = (record: Record<string, unknown>, key: string): string => {
-  const value = record[key];
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new SupabashError('HISTORY_CORRUPTION', `History record is missing '${key}'.`);
-  }
-  return value;
-};
-
-const optionalString = (record: Record<string, unknown>, key: string): string | undefined => {
-  const value = record[key];
-  return typeof value === 'string' ? value : undefined;
-};
-
-const requiredNumber = (record: Record<string, unknown>, key: string): number => {
-  const value = record[key];
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new SupabashError('HISTORY_CORRUPTION', `History record is missing '${key}'.`);
-  }
-  return value;
+  throw new SupabashError('HISTORY_CORRUPTION', 'History record has an invalid change kind.');
 };

@@ -4,6 +4,7 @@ import {
   type DelegatedOperation,
 } from '../api/capability.js';
 import { SupabashError } from '../api/errors.js';
+import { asUnknownRecord } from '../api/json.js';
 
 const SAFE_BUCKET = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/u;
 const SAFE_PREFIX = /^[A-Za-z0-9_-]{1,128}(?:\/[A-Za-z0-9_-]{1,128})*$/u;
@@ -69,14 +70,11 @@ const isOperation = (value: string): value is DelegatedOperation => {
 };
 
 const asObject = (value: unknown): Record<string, unknown> => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  const record = asUnknownRecord(value);
+  if (record === undefined) {
     throw invalid('Capability payload is not an object.');
   }
-  const result: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    result[key] = entry;
-  }
-  return result;
+  return record;
 };
 
 const requiredString = (record: Record<string, unknown>, key: string): string => {

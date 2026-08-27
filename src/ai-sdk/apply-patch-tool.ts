@@ -24,26 +24,17 @@ export const createApplyPatchTool = (workspace: Workspace, options: ApplyPatchOp
     },
   });
 
-interface ProviderPatchOperation {
-  readonly type: string;
-  readonly path: string;
-  readonly diff?: string;
-  readonly moveTo?: string;
-}
+type ProviderPatchOperation =
+  | { readonly type: 'create_file'; readonly path: string; readonly diff: string }
+  | { readonly type: 'delete_file'; readonly path: string }
+  | { readonly type: 'update_file'; readonly path: string; readonly diff: string };
 
 const asPatchOperation = (operation: ProviderPatchOperation): ApplyPatchOperation => {
   if (operation.type === 'delete_file') {
     return { path: operation.path, type: 'delete_file' };
   }
   if (operation.type === 'create_file') {
-    return { diff: operation.diff ?? '', path: operation.path, type: 'create_file' };
+    return { diff: operation.diff, path: operation.path, type: 'create_file' };
   }
-  return operation.moveTo === undefined
-    ? { diff: operation.diff ?? '', path: operation.path, type: 'update_file' }
-    : {
-        diff: operation.diff ?? '',
-        moveTo: operation.moveTo,
-        path: operation.path,
-        type: 'update_file',
-      };
+  return { diff: operation.diff, path: operation.path, type: 'update_file' };
 };

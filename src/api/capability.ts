@@ -59,7 +59,6 @@ export interface OpenDelegatedOptions {
   readonly fetch?: typeof globalThis.fetch;
   readonly limits?: WorkspaceLimits;
   readonly maxFileSystemBytes?: number;
-  readonly publishableKey: string;
   readonly serviceRoleKey: string;
   readonly supabaseUrl: string;
   readonly uploadConcurrency?: number;
