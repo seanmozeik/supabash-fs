@@ -11,7 +11,6 @@ import {
 import type { WorkspaceEntryKind } from '../api/contracts.js';
 import { SupabashError } from '../api/errors.js';
 import { comparePaths, compareRemoteEntryPaths, orderRemoteEntries } from './entry-order.js';
-import { deduplicateDownload } from './lazy-download.js';
 import {
   isSameOrDescendant,
   moveDescendant,
@@ -20,6 +19,7 @@ import {
   ROOT_PATH,
 } from './path.js';
 import type { PendingChanges, RemoteEntry, UploadDraft } from './storage.js';
+import { pristineRemoteStat, restoreRemoteEntry } from './tracked-restore.js';
 
 type ReadOptions = Parameters<IFileSystem['readFile']>[1];
 type WriteOptions = Parameters<IFileSystem['writeFile']>[2];
@@ -53,7 +53,8 @@ export class TrackedFileSystem implements IFileSystem {
   }
 
   private async reset(entries: readonly RemoteEntry[]): Promise<void> {
-    const options = this.maxTotalBytes === undefined ? {} : { maxTotalBytes: this.maxTotalBytes };
+    const options =
+      this.maxTotalBytes === undefined ? undefined : { maxTotalBytes: this.maxTotalBytes };
     this.inner = new InMemoryFs(undefined, options);
     this.baseline = new Map(entries.map((entry) => [entry.path, entry]));
     this.kinds = new Map([[ROOT_PATH, 'directory']]);
@@ -64,7 +65,7 @@ export class TrackedFileSystem implements IFileSystem {
     for (const entry of orderRemoteEntries(entries)) {
       this.rememberParents(entry.path);
       this.kinds.set(entry.path, entry.kind);
-      await this.restoreEntry(entry);
+      await restoreRemoteEntry(this.inner, entry, this.download);
     }
   }
 
@@ -73,10 +74,7 @@ export class TrackedFileSystem implements IFileSystem {
       throw new SupabashError('COMMIT_IN_PROGRESS', 'A workspace commit is already running.');
     }
     this.commitInProgress = true;
-    return {
-      deletions: [...this.deletions.values()].toSorted(compareRemoteEntryPaths),
-      upserts: [...this.upserts].toSorted(comparePaths),
-    };
+    return this.pendingPreview();
   }
 
   finishCommit(entries: readonly RemoteEntry[]): void {
@@ -98,6 +96,25 @@ export class TrackedFileSystem implements IFileSystem {
   async discardChanges(): Promise<void> {
     this.assertMutable();
     await this.reset([...this.baseline.values()]);
+  }
+
+  pendingPreview(): PendingChanges {
+    return {
+      deletions: [...this.deletions.values()].toSorted(compareRemoteEntryPaths),
+      upserts: [...this.upserts].toSorted(comparePaths),
+    };
+  }
+
+  kindOf(path: string): WorkspaceEntryKind {
+    const kind = this.kinds.get(normalizeVirtualPath(path));
+    if (kind === undefined) {
+      throw new SupabashError('INVALID_PATH', 'Path does not exist.', { path });
+    }
+    return kind;
+  }
+
+  baselineEntries(): readonly RemoteEntry[] {
+    return [...this.baseline.values()];
   }
 
   baselineEntry(path: string): RemoteEntry | undefined {
@@ -267,40 +284,13 @@ export class TrackedFileSystem implements IFileSystem {
     this.trackExistingUpsert(changedPath);
   }
 
-  private async restoreEntry(entry: RemoteEntry): Promise<void> {
-    if (entry.kind === 'file') {
-      this.inner.writeFileLazy(
-        entry.path,
-        deduplicateDownload(() => this.download(entry)),
-        { mode: entry.mode, mtime: entry.modifiedAt },
-      );
-      return;
-    }
-    await (entry.kind === 'directory'
-      ? this.inner.mkdir(entry.path, { recursive: true })
-      : this.inner.symlink(entry.target ?? '', entry.path));
-    await this.inner.chmod(entry.path, entry.mode);
-    await this.inner.utimes(entry.path, entry.modifiedAt, entry.modifiedAt);
-  }
-
   private pristineStat(path: string): Promise<FsStat> | undefined {
     const normalized = normalizeVirtualPath(path);
-    if (this.upserts.has(normalized) || this.deletions.has(normalized)) {
-      return undefined;
-    }
-    const remote = this.baseline.get(normalized);
-    if (remote?.kind !== 'file') {
-      return undefined;
-    }
-    return Promise.resolve({
-      identity: `supabash:${remote.etag ?? remote.path}`,
-      isDirectory: false,
-      isFile: true,
-      isSymbolicLink: false,
-      mode: remote.mode,
-      mtime: remote.modifiedAt,
-      size: remote.size,
-    });
+    return pristineRemoteStat(
+      normalized,
+      this.baseline,
+      this.upserts.has(normalized) || this.deletions.has(normalized),
+    );
   }
 
   private entriesWithin(path: string): (readonly [string, WorkspaceEntryKind])[] {

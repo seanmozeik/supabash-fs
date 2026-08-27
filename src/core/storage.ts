@@ -1,4 +1,5 @@
 import type { WorkspaceEntryKind } from '../api/contracts.js';
+import type { HistoryBlobStore } from '../history/blob-store.js';
 
 export interface RemoteEntry {
   readonly contentHash?: string;
@@ -37,6 +38,7 @@ export interface ScopedStorage {
   readonly delete: (entries: readonly RemoteEntry[]) => Promise<void>;
   readonly download: (entry: RemoteEntry) => Promise<Uint8Array>;
   readonly head: (path: string) => Promise<RemoteEntry | undefined>;
+  readonly history: HistoryBlobStore;
   readonly list: () => Promise<readonly RemoteEntry[]>;
   readonly upload: (entry: UploadEntry) => Promise<RemoteEntry>;
 }

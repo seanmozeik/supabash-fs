@@ -1,5 +1,33 @@
+import type { CommitContext, CommitCoordinator, CommitOptions } from '../api/commit.js';
 import type { CommitReceipt, Workspace, WorkspaceChange } from '../api/contracts.js';
 import { SupabashError } from '../api/errors.js';
+import type {
+  CheckpointOptions,
+  CheckpointReceipt,
+  HistoryPage,
+  HistoryQuery,
+  PurgeOptions,
+  PurgeReceipt,
+  ReadonlyWorkspaceView,
+  RestorePlan,
+  RevisionDiff,
+  RevisionDiffInput,
+  RevisionEntry,
+} from '../api/history.js';
+import { createCheckpoint } from '../history/checkpoint.js';
+import { diffRevisions } from '../history/diff.js';
+import type { WorkspaceLimits } from '../history/limits.js';
+import {
+  existingIdempotentReceipt,
+  finalizePublish,
+  withLease,
+  writeIntent,
+} from '../history/publish.js';
+import { purgeHistory } from '../history/purge.js';
+import { readHistoryPage } from '../history/query.js';
+import { assertCommitQuotas } from '../history/quota.js';
+import { readRevisionView } from '../history/readonly.js';
+import { planRestore } from '../history/restore.js';
 import { mapInBatches } from './batches.js';
 import { contentTypeForPath } from './content-type.js';
 import { comparePaths } from './entry-order.js';
@@ -8,7 +36,10 @@ import type { RemoteEntry, ScopedStorage, UploadDraft, UploadEntry } from './sto
 import { TrackedFileSystem } from './tracked-file-system.js';
 
 export interface StorageWorkspaceOptions {
+  readonly coordinator?: CommitCoordinator;
+  readonly limits?: WorkspaceLimits;
   readonly maxFileSystemBytes?: number;
+  readonly scope?: string;
   readonly uploadConcurrency?: number;
 }
 
@@ -22,44 +53,161 @@ export const createStorageWorkspace = async (
     (entry) => storage.download(entry),
     options.maxFileSystemBytes,
   );
-  return new StorageWorkspace(storage, filesystem, options.uploadConcurrency ?? 4);
+  return new StorageWorkspace(storage, filesystem, options);
 };
 
 class StorageWorkspace implements Workspace {
   readonly fs: TrackedFileSystem;
+  private readonly coordinator: CommitCoordinator | undefined;
+  private readonly limits: WorkspaceLimits;
+  private readonly scope: string;
   private readonly storage: ScopedStorage;
   private readonly uploadConcurrency: number;
 
-  constructor(storage: ScopedStorage, filesystem: TrackedFileSystem, uploadConcurrency: number) {
+  constructor(
+    storage: ScopedStorage,
+    filesystem: TrackedFileSystem,
+    options: StorageWorkspaceOptions,
+  ) {
+    const uploadConcurrency = options.uploadConcurrency ?? 4;
     if (!Number.isSafeInteger(uploadConcurrency) || uploadConcurrency < 1) {
       throw new RangeError('uploadConcurrency must be a positive integer.');
     }
     this.storage = storage;
     this.fs = filesystem;
     this.uploadConcurrency = uploadConcurrency;
+    this.scope = options.scope ?? 'local';
+    this.coordinator = options.coordinator;
+    this.limits = options.limits ?? {};
   }
 
-  async commit(): Promise<CommitReceipt> {
+  changes(): readonly WorkspaceChange[] {
+    const pending = this.fs.pendingPreview();
+    return [
+      ...pending.deletions.map(changeForDelete),
+      ...pending.upserts.map((path) => ({
+        entryKind: this.fs.kindOf(path),
+        kind: 'upsert' as const,
+        path,
+      })),
+    ].toSorted((left, right) => comparePaths(left.path, right.path));
+  }
+
+  async checkpoint(options: CheckpointOptions = {}): Promise<CheckpointReceipt> {
+    const { commitStaged, ...marker } = options;
+    if (commitStaged === true) {
+      await this.commit();
+    }
+    return createCheckpoint(this.storage.history, marker);
+  }
+
+  async commit(options: CommitOptions = {}): Promise<CommitReceipt> {
+    const context = commitContext(options.context);
+    const replay = await existingIdempotentReceipt(this.storage.history, context, this.scope);
+    if (replay !== undefined) {
+      return replay;
+    }
     const pending = this.fs.beginCommit();
+    const publish = { intentWritten: false };
     try {
       const uploads = await mapInBatches(pending.upserts, this.uploadConcurrency, async (path) =>
         prepareUpload(await this.fs.uploadEntry(path)),
       );
-      await this.assertNoConflicts(pending.deletions, uploads);
-      const uploaded = await mapInBatches(uploads, this.uploadConcurrency, (entry) =>
-        this.storage.upload(entry),
+      assertCommitQuotas(
+        uploads,
+        pending.deletions,
+        visibleCount(this.fs.baselineEntries(), pending.deletions, uploads),
+        context.metadata,
+        this.limits,
       );
-      await this.storage.delete(pending.deletions);
-      this.fs.finishCommit(uploaded);
-      return receiptFor(pending.deletions, uploaded);
+      await this.assertNoConflicts(pending.deletions, uploads);
+      const transactionId = crypto.randomUUID();
+      const revision = crypto.randomUUID();
+      return await withLease(this.coordinator, this.scope, transactionId, async (lost) => {
+        const publishInput = {
+          baseline: this.fs.baselineEntries(),
+          changes: this.changesFrom(pending, uploads),
+          context,
+          deletions: pending.deletions,
+          history: this.storage.history,
+          scope: this.scope,
+          storage: this.storage,
+        };
+        const intent = await writeIntent(publishInput, transactionId, revision);
+        publish.intentWritten = true;
+        const uploaded = await mapInBatches(uploads, this.uploadConcurrency, (entry) =>
+          this.storage.upload(entry),
+        );
+        await this.storage.delete(pending.deletions);
+        const receipt = await finalizePublish({ ...publishInput, uploads: uploaded }, intent, lost);
+        this.fs.finishCommit(uploaded);
+        return receipt;
+      });
     } catch (error) {
       this.fs.failCommit();
-      throw asSupabashError(error);
+      throw publish.intentWritten ? partial(error) : asSupabashError(error);
     }
   }
 
-  async discard(): Promise<void> {
-    await this.fs.discardChanges();
+  discard(): Promise<void> {
+    return this.fs.discardChanges();
+  }
+
+  async diff(input: RevisionDiffInput): Promise<RevisionDiff> {
+    return diffRevisions(this.storage.history, input, {
+      entries: await this.stagedEntries(),
+      label: 'staged',
+    });
+  }
+
+  history(query?: HistoryQuery): Promise<HistoryPage> {
+    return readHistoryPage(this.storage.history, this.scope, query);
+  }
+
+  purge(options: PurgeOptions): Promise<PurgeReceipt> {
+    return purgeHistory(this.storage.history, options);
+  }
+
+  readRevision(revision: string): Promise<ReadonlyWorkspaceView> {
+    return readRevisionView(this.storage.history, revision);
+  }
+
+  restore(revision: string): Promise<RestorePlan> {
+    return planRestore(this.storage.history, this.fs, revision);
+  }
+
+  private changesFrom(
+    pending: { deletions: readonly RemoteEntry[]; upserts: readonly string[] },
+    uploads: readonly UploadEntry[],
+  ): readonly WorkspaceChange[] {
+    const uploaded = new Map(uploads.map((entry) => [entry.path, entry]));
+    return [
+      ...pending.deletions.map(changeForDelete),
+      ...pending.upserts.map((path) =>
+        changeForUpload(uploaded.get(path) ?? this.fs.baselineEntry(path)),
+      ),
+    ].toSorted((left, right) => comparePaths(left.path, right.path));
+  }
+
+  private async stagedEntries(): Promise<readonly RevisionEntry[]> {
+    const pending = this.fs.pendingPreview();
+    const deleted = new Set(pending.deletions.map((entry) => entry.path));
+    const entries: RevisionEntry[] = this.fs
+      .baselineEntries()
+      .filter((entry) => !deleted.has(entry.path))
+      .map((entry) => remoteAsRevision(entry));
+    for (const path of pending.upserts) {
+      const draft = await this.fs.uploadEntry(path);
+      entries.push({
+        entryKind: draft.kind,
+        mode: draft.mode,
+        path: draft.path,
+        size: draft.body?.byteLength ?? 0,
+        ...(draft.contentHash !== undefined && { contentHash: draft.contentHash }),
+        ...(draft.target !== undefined && { target: draft.target }),
+      });
+    }
+    return entries;
   }
 
   private async assertNoConflicts(
@@ -113,17 +261,27 @@ const contentHashFor = (entry: UploadDraft): Promise<string> => {
   return sha256(new TextEncoder().encode(entry.target ?? ''));
 };
 
+const visibleCount = (
+  baseline: readonly RemoteEntry[],
+  deletions: readonly RemoteEntry[],
+  uploads: readonly UploadEntry[],
+): number => {
+  const deleted = new Set(deletions.map((entry) => entry.path));
+  const visible = new Set(baseline.map((entry) => entry.path).filter((path) => !deleted.has(path)));
+  for (const upload of uploads) {
+    visible.add(upload.path);
+  }
+  return visible.size;
+};
+
 const sameOptionalVersion = (baseline: RemoteEntry, current: RemoteEntry | undefined): boolean =>
   current !== undefined && sameRemoteVersion(baseline, current);
 
 const sameRemoteVersion = (baseline: RemoteEntry, current: RemoteEntry): boolean => {
-  if (baseline.kind !== current.kind) {
-    return false;
-  }
-  if (baseline.etag !== undefined && current.etag !== undefined) {
+  if (baseline.etag !== undefined || current.etag !== undefined) {
     return baseline.etag === current.etag;
   }
-  if (baseline.versionHash !== undefined && current.versionHash !== undefined) {
+  if (baseline.versionHash !== undefined || current.versionHash !== undefined) {
     return baseline.versionHash === current.versionHash;
   }
   return (
@@ -131,35 +289,58 @@ const sameRemoteVersion = (baseline: RemoteEntry, current: RemoteEntry): boolean
   );
 };
 
-const receiptFor = (
-  deletions: readonly RemoteEntry[],
-  uploads: readonly RemoteEntry[],
-): CommitReceipt => ({
-  changes: [
-    ...deletions.map((entry) => changeForDelete(entry)),
-    ...uploads.map((entry) => changeForUpload(entry)),
-  ].toSorted((left, right) => comparePaths(left.path, right.path)),
-  committedAt: new Date(),
-  revision: crypto.randomUUID(),
-});
-
 const changeForDelete = (entry: RemoteEntry): WorkspaceChange => ({
   entryKind: entry.kind,
   kind: 'delete',
   path: entry.path,
+  ...(entry.contentHash !== undefined && {
+    beforeHash: entry.contentHash,
+    contentHash: entry.contentHash,
+  }),
+  ...(entry.etag !== undefined && { etag: entry.etag }),
+  beforeSize: entry.size,
 });
 
-const changeForUpload = (entry: RemoteEntry): WorkspaceChange => ({
-  ...(entry.contentHash !== undefined && { contentHash: entry.contentHash }),
+const changeForUpload = (entry: RemoteEntry | UploadEntry | undefined): WorkspaceChange => {
+  if (entry === undefined) {
+    throw new SupabashError('STORAGE', 'Upload is missing from the commit set.');
+  }
+  const etag = 'etag' in entry ? entry.etag : undefined;
+  const afterSize = 'size' in entry ? entry.size : entry.body?.byteLength;
+  return {
+    entryKind: entry.kind,
+    kind: 'upsert',
+    path: entry.path,
+    ...(entry.contentHash !== undefined && {
+      afterHash: entry.contentHash,
+      contentHash: entry.contentHash,
+    }),
+    ...(etag !== undefined && { etag }),
+    ...(afterSize !== undefined && { afterSize }),
+  };
+};
+
+const remoteAsRevision = (entry: RemoteEntry): RevisionEntry => ({
   entryKind: entry.kind,
-  ...(entry.etag !== undefined && { etag: entry.etag }),
-  kind: 'upsert',
+  mode: entry.mode,
   path: entry.path,
+  size: entry.size,
+  ...(entry.contentHash !== undefined && { contentHash: entry.contentHash }),
+  ...(entry.etag !== undefined && { etag: entry.etag }),
+  ...(entry.target !== undefined && { target: entry.target }),
 });
+
+const commitContext = (context: CommitContext | undefined): CommitContext =>
+  context ?? { actor: 'workspace', correlationId: crypto.randomUUID() };
 
 const conflict = (path: string): SupabashError =>
   new SupabashError('COMMIT_CONFLICT', 'Stored entry changed after the workspace opened.', {
     path,
+  });
+
+const partial = (error: unknown): SupabashError =>
+  new SupabashError('PARTIAL_COMMIT', 'Commit did not finish publishing a complete revision.', {
+    cause: asSupabashError(error),
   });
 
 const asSupabashError = (error: unknown): SupabashError =>

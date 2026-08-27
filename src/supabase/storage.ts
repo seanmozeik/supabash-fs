@@ -5,6 +5,8 @@ import { mapInBatches } from '../core/batches.js';
 import { comparePaths } from '../core/entry-order.js';
 import { normalizeVirtualPath, relativeObjectPath } from '../core/path.js';
 import type { RemoteEntry, ScopedStorage, UploadEntry } from '../core/storage.js';
+import { isHistoryRelative } from '../history/keys.js';
+import { SupabaseHistoryStore } from './history-store.js';
 import {
   contentTypeFor,
   entryFromInfo,
@@ -37,12 +39,14 @@ export const createSupabaseStorage = (
 };
 
 class SupabaseStorage implements ScopedStorage {
+  readonly history: SupabaseHistoryStore;
   private readonly bucket: BucketApi;
   private readonly root: string;
 
   constructor(bucket: BucketApi, root: string) {
     this.bucket = bucket;
     this.root = root;
+    this.history = new SupabaseHistoryStore(bucket, root);
   }
 
   async list(): Promise<readonly RemoteEntry[]> {
@@ -146,6 +150,9 @@ class SupabaseStorage implements ScopedStorage {
         ? object.name
         : `${this.root}${object.name.replace(/^\/+/u, '')}`);
     const relative = this.relativeKey(key);
+    if (isHistoryRelative(relative)) {
+      return undefined;
+    }
     const path = normalizeVirtualPath(`/${relative}`);
     const info = await this.info(key);
     return info === undefined ? undefined : entryFromInfo(path, kindFromInfo(info), info);

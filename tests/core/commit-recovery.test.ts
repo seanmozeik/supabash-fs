@@ -88,6 +88,10 @@ class DeleteOnceStorage implements ScopedStorage {
     this.inner = inner;
   }
 
+  get history() {
+    return this.inner.history;
+  }
+
   list(): Promise<readonly RemoteEntry[]> {
     return this.inner.list();
   }
@@ -108,7 +112,7 @@ class DeleteOnceStorage implements ScopedStorage {
   delete(entries: readonly RemoteEntry[]): Promise<void> {
     if (this.deleteShouldFail) {
       this.deleteShouldFail = false;
-      return Promise.reject(new Error('Injected delete failure.'));
+      return Promise.reject(new Error('delete failed'));
     }
     return this.inner.delete(entries);
   }
@@ -121,6 +125,7 @@ const gatedUploadStorage = (inner: MemoryStorage) => {
     delete: (entries) => inner.delete(entries),
     download: (entry) => inner.download(entry),
     head: (path) => inner.head(path),
+    history: inner.history,
     list: () => inner.list(),
     upload: async (entry) => {
       uploadStarted.resolve(true);
@@ -131,6 +136,6 @@ const gatedUploadStorage = (inner: MemoryStorage) => {
   return { releaseUpload, storage, uploadStarted };
 };
 
-const storageError = (): Partial<SupabashError> => ({ code: 'STORAGE' });
+const storageError = (): Partial<SupabashError> => ({ code: 'PARTIAL_COMMIT' });
 
 const commitInProgressError = (): Partial<SupabashError> => ({ code: 'COMMIT_IN_PROGRESS' });

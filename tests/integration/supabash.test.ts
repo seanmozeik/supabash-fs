@@ -78,13 +78,17 @@ describe('public workspace API', () => {
     const storageCalls = api.calls.filter(({ path }) => path.startsWith('/storage/'));
     expect({
       firstText: api.text('user-a/folder/file.md'),
-      keys: api.keys(),
+      historyScoped: api
+        .keys()
+        .every((key) => key.startsWith('user-a/') || key.startsWith('user-b/')),
+      keys: visibleKeys(api.keys()),
       listPrefixes: api.listPrefixes,
       secondSawFirstRoot,
       secondText: api.text('user-b/file.md'),
       storageAuthorizations: new Set(storageCalls.map(({ authorization }) => authorization)),
     }).toStrictEqual({
       firstText: 'first user\n',
+      historyScoped: true,
       keys: ['user-a/folder', 'user-a/folder/file.md', 'user-a/latest', 'user-b/file.md'],
       listPrefixes: ['user-a/', 'user-b/'],
       secondSawFirstRoot: false,
@@ -106,7 +110,7 @@ describe('public workspace API', () => {
     await first.fs.rm('/entry');
     await first.fs.mkdir('/entry');
     await first.commit();
-    expect(api.keys()).toStrictEqual(['user-a/entry']);
+    expect(visibleKeys(api.keys())).toStrictEqual(['user-a/entry']);
 
     const second = await Supabash.open(optionsFor(api, 'token'));
     await expect(second.fs.lstat('/entry')).resolves.toMatchObject({ isDirectory: true });
@@ -116,7 +120,7 @@ describe('public workspace API', () => {
 
     const third = await Supabash.open(optionsFor(api, 'token'));
     await expect(third.fs.readFile('/entry')).resolves.toBe('again\n');
-    expect(api.keys()).toStrictEqual(['user-a/entry']);
+    expect(visibleKeys(api.keys())).toStrictEqual(['user-a/entry']);
   });
 });
 
@@ -135,3 +139,6 @@ const jwtForRole = (role: string): string => `e30.${btoa(JSON.stringify({ role }
 const authenticationError = (): Partial<SupabashError> => ({ code: 'AUTHENTICATION' });
 
 const authorizationError = (): Partial<SupabashError> => ({ code: 'AUTHORIZATION' });
+
+const visibleKeys = (keys: readonly string[]): readonly string[] =>
+  keys.filter((key) => !key.split('/').includes('.supabash'));

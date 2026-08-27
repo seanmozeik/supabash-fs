@@ -1,5 +1,6 @@
 import { comparePaths } from '../../src/core/entry-order.ts';
 import type { RemoteEntry, ScopedStorage, UploadEntry } from '../../src/core/storage.ts';
+import type { HistoryBlobStore } from '../../src/history/blob-store.ts';
 
 export interface SeedFile {
   readonly body: string | Uint8Array;
@@ -14,11 +15,43 @@ interface StoredEntry {
 
 const DEFAULT_MODE = 0o644;
 
+export class MemoryHistoryStore implements HistoryBlobStore {
+  private readonly blobs = new Map<string, Uint8Array>();
+
+  get(key: string): Promise<Uint8Array | undefined> {
+    const body = this.blobs.get(key);
+    return Promise.resolve(body === undefined ? undefined : Uint8Array.from(body));
+  }
+
+  put(key: string, body: Uint8Array): Promise<void> {
+    this.blobs.set(key, Uint8Array.from(body));
+    return Promise.resolve();
+  }
+
+  remove(keys: readonly string[]): Promise<void> {
+    for (const key of keys) {
+      this.blobs.delete(key);
+    }
+    return Promise.resolve();
+  }
+
+  list(prefix: string): Promise<readonly string[]> {
+    return Promise.resolve(
+      [...this.blobs.keys()].filter((key) => key.startsWith(prefix)).toSorted(),
+    );
+  }
+
+  text(key: string): string | undefined {
+    const body = this.blobs.get(key);
+    return body === undefined ? undefined : new TextDecoder().decode(body);
+  }
+}
+
 export class MemoryStorage implements ScopedStorage {
   readonly downloads: string[] = [];
+  readonly history = new MemoryHistoryStore();
   private etagSequence = 0;
   private readonly entries = new Map<string, StoredEntry>();
-
   constructor(seedFiles: readonly SeedFile[] = []) {
     for (const seed of seedFiles) {
       this.setFile(seed.path, toBytes(seed.body), seed.contentType);
