@@ -1,9 +1,10 @@
 {
   "compilerOptions": { "lib": ["deno.window", "dom", "dom.iterable", "esnext"], "strict": true },
   "imports": {
-    "@seanmozeik/supabash-fs": "./dist/index.js",
+    "@seanmozeik/supabash-fs": "./src/index.ts",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2.112.4",
     "just-bash/browser": "npm:just-bash@3.4.2/browser"
   },
-  "lock": false
+  "lock": false,
+  "unstable": ["sloppy-imports"]
 }

@@ -1,14 +1,16 @@
 {
   "name": "@seanmozeik/supabash-fs",
-  "version": "0.1.0",
-  "description": "Authenticated Supabase Storage filesystem for Just Bash.",
+  "version": "0.2.0",
+  "description": "Authenticated Supabase Storage workspace filesystem for Just Bash, Apply Patch, and durable revisions.",
   "keywords": [
+    "apply-patch",
     "deno",
     "edge",
     "filesystem",
     "just-bash",
     "supabase",
-    "virtual-filesystem"
+    "virtual-filesystem",
+    "workspace"
   ],
   "license": "MIT",
   "author": "Sean Lees",
@@ -17,6 +19,7 @@
     "examples",
     "LICENSE",
     "README.md",
+    "CHANGELOG.md",
     "THIRD_PARTY_NOTICES.md"
   ],
   "type": "module",
@@ -47,7 +50,7 @@
     "build:js:root": "bun build ./src/index.ts --outfile ./dist/index.js --target browser --format esm --packages external",
     "build:smoke": "bun ./scripts/check-built-package.mjs && bun ./scripts/check-built-ai-sdk.mjs",
     "build:types": "tsc -p tsconfig.build.json",
-    "check:deno": "deno check --config deno.json tests/deno/live-supabase.ts",
+    "check:deno": "deno check --sloppy-imports --config deno.check.json tests/deno/live-supabase.ts",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run source:size",
     "fix": "oxfmt --write . && oxlint --type-aware --type-check --deny-warnings --fix .",
     "format": "oxfmt --write .",

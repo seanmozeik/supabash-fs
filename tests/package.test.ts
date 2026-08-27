@@ -5,6 +5,7 @@ import packageJson from '../package.json';
 describe('package metadata', () => {
   test('is configured for public distribution', () => {
     expect(packageJson.name).toBe('@seanmozeik/supabash-fs');
+    expect(packageJson.version).toBe('0.2.0');
     expect(packageJson.publishConfig.access).toBe('public');
     expect('private' in packageJson).toBe(false);
   });

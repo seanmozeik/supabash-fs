@@ -319,10 +319,7 @@ interface CommitCoordinator {
   readonly acquire: (input: {
     readonly scope: string;
     readonly transactionId: string;
-  }) => Promise<{
-    readonly lost: () => Promise<boolean>;
-    readonly release: () => Promise<void>;
-  }>;
+  }) => Promise<{ readonly lost: () => Promise<boolean>; readonly release: () => Promise<void> }>;
 }
 ```
 
@@ -444,21 +441,21 @@ interface SupabashOptions {
 
 Documented defaults:
 
-| Limit | Default |
-| --- | --- |
-| `maxVisibleFiles` | 10_000 |
-| `maxPathLength` | 1_024 |
-| `maxFileSize` | 10_485_760 |
-| `maxStagedBytes` | 52_428_800 |
-| `maxPatchSize` | 1_048_576 |
-| `maxCommandLength` | 32_768 |
-| `maxBashOutput` | 262_144 |
-| `maxToolExecutionMs` | 30_000 |
-| `maxHistoryPageSize` | 100 |
-| `maxDiffPreviewBytes` | 8_192 |
-| `maxTransactionMetadataBytes` | 16_384 |
-| `maxRevisions` purge hint | 50 |
-| `uploadConcurrency` | 4 |
+| Limit                         | Default    |
+| ----------------------------- | ---------- |
+| `maxVisibleFiles`             | 10_000     |
+| `maxPathLength`               | 1_024      |
+| `maxFileSize`                 | 10_485_760 |
+| `maxStagedBytes`              | 52_428_800 |
+| `maxPatchSize`                | 1_048_576  |
+| `maxCommandLength`            | 32_768     |
+| `maxBashOutput`               | 262_144    |
+| `maxToolExecutionMs`          | 30_000     |
+| `maxHistoryPageSize`          | 100        |
+| `maxDiffPreviewBytes`         | 8_192      |
+| `maxTransactionMetadataBytes` | 16_384     |
+| `maxRevisions` purge hint     | 50         |
+| `uploadConcurrency`           | 4          |
 
 Limits fail before a durable mutation when possible and return a typed error.
 
@@ -466,24 +463,24 @@ Limits fail before a durable mutation when possible and return a typed error.
 
 All package errors are `SupabashError` values:
 
-| Code | Meaning |
-| --- | --- |
-| `AUTHENTICATION` | The bearer token is missing, malformed, or not verified. |
-| `AUTHORIZATION` | A key, verified identity, bucket, or root is unsafe. |
-| `COMMIT_CONFLICT` | A changed remote entry no longer matches the opened version. |
-| `COMMIT_COORDINATION` | The optional commit lease was lost. |
-| `COMMIT_IN_PROGRESS` | Code tried to mutate or commit an active commit. |
-| `EXPIRED_CAPABILITY` | The delegated capability has expired. |
-| `HISTORY_CORRUPTION` | A history record could not be parsed. |
-| `INVALID_CAPABILITY` | The delegated capability is not acceptable. |
-| `INVALID_PATCH` | The V4A patch could not be applied. |
-| `INVALID_PATH` | A virtual path is unsafe or invalid. |
-| `PARTIAL_COMMIT` | Remote writes stopped before a complete revision. |
-| `POLICY_DENIED` | The command policy denied a Bash command. |
-| `QUOTA_EXCEEDED` | A configured limit was exceeded. |
-| `REVISION_NOT_FOUND` | The requested revision is missing. |
-| `STORAGE` | A Supabase Storage operation failed. |
-| `UNSUPPORTED_CONTENT` | The path or bytes cannot be used for this operation. |
+| Code                  | Meaning                                                      |
+| --------------------- | ------------------------------------------------------------ |
+| `AUTHENTICATION`      | The bearer token is missing, malformed, or not verified.     |
+| `AUTHORIZATION`       | A key, verified identity, bucket, or root is unsafe.         |
+| `COMMIT_CONFLICT`     | A changed remote entry no longer matches the opened version. |
+| `COMMIT_COORDINATION` | The optional commit lease was lost.                          |
+| `COMMIT_IN_PROGRESS`  | Code tried to mutate or commit an active commit.             |
+| `EXPIRED_CAPABILITY`  | The delegated capability has expired.                        |
+| `HISTORY_CORRUPTION`  | A history record could not be parsed.                        |
+| `INVALID_CAPABILITY`  | The delegated capability is not acceptable.                  |
+| `INVALID_PATCH`       | The V4A patch could not be applied.                          |
+| `INVALID_PATH`        | A virtual path is unsafe or invalid.                         |
+| `PARTIAL_COMMIT`      | Remote writes stopped before a complete revision.            |
+| `POLICY_DENIED`       | The command policy denied a Bash command.                    |
+| `QUOTA_EXCEEDED`      | A configured limit was exceeded.                             |
+| `REVISION_NOT_FOUND`  | The requested revision is missing.                           |
+| `STORAGE`             | A Supabase Storage operation failed.                         |
+| `UNSUPPORTED_CONTENT` | The path or bytes cannot be used for this operation.         |
 
 `SupabashError.path` identifies the affected virtual path when one is
 available. The original error is available through `error.cause`.
