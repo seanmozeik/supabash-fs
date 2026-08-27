@@ -1,16 +1,12 @@
 import type { Workspace } from '../api/contracts.js';
 import type { ApplyPatchOptions } from '../patch/operations.js';
+import type { CommandInspector, CommandPolicyOptions } from '../policy/types.js';
 
-export interface CommandInspectDecision {
-  readonly allow: boolean;
-  readonly code?: string;
-  readonly reason?: string;
-}
-
-export interface CommandInspector {
-  readonly inspect: (command: string) => CommandInspectDecision | Promise<CommandInspectDecision>;
-}
-
+export type {
+  CommandInspectDecision,
+  CommandInspector,
+  CommandPolicyOptions,
+} from '../policy/types.js';
 export interface BashToolLimits {
   readonly maxBashOutput?: number;
   readonly maxCommandLength?: number;
@@ -20,6 +16,7 @@ export interface BashToolLimits {
 export interface BashToolOptions {
   readonly limits?: BashToolLimits;
   readonly policy?: CommandInspector;
+  readonly policyOptions?: CommandPolicyOptions;
 }
 
 export interface ViewImageOptions {

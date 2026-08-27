@@ -59,7 +59,7 @@ describe('workspace AI SDK tools', () => {
     });
     await expect(invoke(tools.bash, { command: 'rm /notes.md' })).resolves.toMatchObject({
       exitCode: 126,
-      stderr: 'rm is blocked.',
+      stderr: 'Policy denied (denied): rm is blocked.',
     });
   });
 });

@@ -3,19 +3,28 @@ import { createBashTool, type CommandResult } from 'bash-tool';
 import { Bash } from 'just-bash/browser';
 
 import type { Workspace } from '../api/contracts.js';
+import { createCommandPolicy } from '../policy/inspect.js';
+import type { CommandInspectDecision } from '../policy/types.js';
 import { DEFAULT_MAX_BASH_OUTPUT, DEFAULT_MAX_COMMAND_LENGTH, boundText } from './bounds.js';
-import type { BashToolOptions, CommandInspectDecision } from './options.js';
+import type { BashToolOptions } from './options.js';
 import { safeToolText } from './redact.js';
 
 const SCOPED_ROOT_INSTRUCTIONS =
   'The filesystem root is already scoped to this workspace. Do not select a bucket, user, prefix, access token, or storage client. Do not commit, discard, inspect history, checkpoint, diff, or restore.';
 
+/**
+ * The bash-tool onBeforeBashCall hook is synchronous and cannot return a typed
+ * deny decision, so this adapter wraps execute() and inspects the command first.
+ */
 export const createWorkspaceBashTool = async (
   workspace: Workspace,
   options: BashToolOptions = {},
 ): Promise<Tool> => {
   const maxCommandLength = options.limits?.maxCommandLength ?? DEFAULT_MAX_COMMAND_LENGTH;
   const maxBashOutput = options.limits?.maxBashOutput ?? DEFAULT_MAX_BASH_OUTPUT;
+  const policy =
+    options.policy ??
+    createCommandPolicy({ maxCommandLength, ...options.policyOptions, fs: workspace.fs });
   const toolkit = await createBashTool({
     destination: '/',
     extraInstructions: SCOPED_ROOT_INSTRUCTIONS,
@@ -40,9 +49,9 @@ export const createWorkspaceBashTool = async (
       if (command.length > maxCommandLength) {
         return denied('Command exceeds the length limit.');
       }
-      const decision = await Promise.resolve(inspectCommand(options, command));
+      const decision = await policy.inspect(command);
       if (!decision.allow) {
-        return denied(decision.reason ?? 'Command denied by policy.');
+        return denied(formatDenial(decision));
       }
       const result = await execute({ command }, extra);
       if (!isCommandResult(result)) {
@@ -63,11 +72,12 @@ const commandFrom = (input: unknown): string => {
   throw new Error('Bash tool input must include a command string.');
 };
 
-const inspectCommand = (
-  options: BashToolOptions,
-  command: string,
-): CommandInspectDecision | Promise<CommandInspectDecision> =>
-  options.policy === undefined ? { allow: true } : options.policy.inspect(command);
+const formatDenial = (decision: CommandInspectDecision): string => {
+  if (decision.code === undefined) {
+    return decision.reason ?? 'Command denied by policy.';
+  }
+  return `Policy denied (${decision.code}): ${decision.reason ?? 'Command denied by policy.'}`;
+};
 
 const denied = (stderr: string): CommandResult => ({ exitCode: 126, stderr, stdout: '' });
 
