@@ -10,6 +10,7 @@ const workspaceWith = (files: readonly { path: string; body: string }[] = []) =>
 describe('applyPatch path and content guards', () => {
   test.each([
     '/.supabash/secret.md',
+    '/.supabash-directory/secret.md',
     '/../escape.md',
     String.raw`/docs\secret.md`,
     '/docs/%2Fsecret.md',

@@ -16,6 +16,7 @@ describe('virtual paths', () => {
     '/docs/%2Fsecret.md',
     '/docs/%2e%2e/secret.md',
     '/.supabash/config.json',
+    '/.supabash-directory',
     '/docs/secret\u0000.md',
   ])('rejects ambiguous or reserved path %s', (path) => {
     expect(() => normalizeVirtualPath(path)).toThrow(SupabashError);

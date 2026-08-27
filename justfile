@@ -55,3 +55,8 @@ verify: check deno-toolchain
   bun run audit:production
   bun run package:check
   bun run package:consumer
+
+[group('test')]
+[doc('Run the live Supabase Deno suite')]
+live: build deno-toolchain
+  bun ./scripts/run-live-supabase.ts

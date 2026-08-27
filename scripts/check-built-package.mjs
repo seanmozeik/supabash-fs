@@ -2,8 +2,8 @@ import { readFile } from 'node:fs/promises';
 
 import { Supabash, SupabashError } from '../dist/index.js';
 
-if (!Object.hasOwn(Supabash, 'open')) {
-  throw new TypeError('The built package does not export Supabash.open.');
+if (!Object.hasOwn(Supabash, 'open') || !Object.hasOwn(Supabash, 'openDelegated')) {
+  throw new TypeError('The built package does not export Supabash.open and openDelegated.');
 }
 
 if (new SupabashError('STORAGE', 'Package smoke check').code !== 'STORAGE') {

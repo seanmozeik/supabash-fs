@@ -7,6 +7,7 @@ import { normalizeVirtualPath, relativeObjectPath } from '../core/path.js';
 import type { RemoteEntry, ScopedStorage, UploadEntry } from '../core/storage.js';
 import { isHistoryRelative } from '../history/keys.js';
 import { SupabaseHistoryStore } from './history-store.js';
+import { listedStorageKey } from './listed-key.js';
 import {
   contentTypeFor,
   entryFromInfo,
@@ -143,11 +144,7 @@ class SupabaseStorage implements ScopedStorage {
   }
 
   private async entryFromList(object: ListedObject): Promise<RemoteEntry | undefined> {
-    const key =
-      object.key ??
-      (object.name.startsWith(this.root)
-        ? object.name
-        : `${this.root}${object.name.replace(/^\/+/u, '')}`);
+    const key = listedStorageKey(this.root, object);
     const relative = this.relativeKey(key);
     if (isHistoryRelative(relative)) {
       return undefined;

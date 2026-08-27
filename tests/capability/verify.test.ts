@@ -124,7 +124,8 @@ describe('delegated capabilities', () => {
       keyId: 'k1',
       privateKey: keys.privateKey,
     });
-    const broken = `${capability.slice(0, -1)}${capability.endsWith('A') ? 'B' : 'A'}`;
+    const parts = capability.split('.');
+    const broken = `${parts[0]}.${parts[1]}.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`;
     let failure: unknown;
     try {
       await verifyDelegatedCapability({

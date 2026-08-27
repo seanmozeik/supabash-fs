@@ -44,6 +44,19 @@ describe('workspace revisions', () => {
     expect(storage.text('/notes.md')).toBe('one\n');
   });
 
+  test('restores file contents without recreating an unchanged symlink', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage());
+    await workspace.fs.writeFile('/notes.md', 'one\n');
+    await workspace.fs.symlink('/notes.md', '/current');
+    const first = await workspace.commit();
+    await workspace.fs.writeFile('/notes.md', 'two\n');
+    await workspace.commit();
+    const plan = await workspace.restore(first.revision);
+    expect(plan.sourceRevision).toBe(first.revision);
+    await expect(workspace.fs.readFile('/notes.md')).resolves.toBe('one\n');
+    await expect(workspace.fs.readlink('/current')).resolves.toBe('/notes.md');
+  });
+
   test('replays an idempotent commit without a second transaction', async () => {
     const storage = new MemoryStorage();
     const workspace = await createStorageWorkspace(storage);

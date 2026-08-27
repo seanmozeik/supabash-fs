@@ -53,10 +53,20 @@ const materialize = async (
   history: HistoryBlobStore,
 ): Promise<void> => {
   if (entry.entryKind === 'directory') {
+    if (await fs.exists(entry.path)) {
+      const stat = await fs.lstat(entry.path);
+      if (!stat.isDirectory) {
+        await fs.rm(entry.path, { force: true });
+      }
+    }
     await fs.mkdir(entry.path, { recursive: true });
     return;
   }
   if (entry.entryKind === 'symlink') {
+    if (await sameSymlink(fs, entry.path, entry.target ?? '')) {
+      return;
+    }
+    await replacePath(fs, entry.path);
     await fs.symlink(entry.target ?? '', entry.path);
     return;
   }
@@ -71,5 +81,25 @@ const materialize = async (
       path: entry.path,
     });
   }
+  if (await fs.exists(entry.path)) {
+    const stat = await fs.lstat(entry.path);
+    if (!stat.isFile) {
+      await fs.rm(entry.path, { force: true, recursive: true });
+    }
+  }
   await fs.writeFile(entry.path, body);
+};
+
+const sameSymlink = async (fs: IFileSystem, path: string, target: string): Promise<boolean> => {
+  if (!(await fs.exists(path))) {
+    return false;
+  }
+  const stat = await fs.lstat(path);
+  return stat.isSymbolicLink && (await fs.readlink(path)) === target;
+};
+
+const replacePath = async (fs: IFileSystem, path: string): Promise<void> => {
+  if (await fs.exists(path)) {
+    await fs.rm(path, { force: true, recursive: true });
+  }
 };

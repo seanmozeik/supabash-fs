@@ -1,7 +1,7 @@
 import { SupabashError } from '../api/errors.js';
 
 const ENCODED_PATH_SYNTAX = /%(?:2e|2f|5c)/iu;
-const RESERVED_SEGMENTS = new Set(['.supabash']);
+const RESERVED_SEGMENTS = new Set(['.supabash', '.supabash-directory']);
 
 export const ROOT_PATH = '/';
 

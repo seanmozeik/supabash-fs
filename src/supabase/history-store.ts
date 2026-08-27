@@ -1,6 +1,7 @@
 import { SupabashError } from '../api/errors.js';
 import type { HistoryBlobStore } from '../history/blob-store.js';
 import { HISTORY_ROOT, assertHistoryKey } from '../history/keys.js';
+import { listedStorageKey } from './listed-key.js';
 
 type BucketApi = {
   readonly download: (key: string) => Promise<{ data: Blob | null; error: unknown }>;
@@ -9,6 +10,7 @@ type BucketApi = {
     extra?: { cache?: RequestCache },
   ) => Promise<{
     data: {
+      folders?: readonly { name: string }[];
       hasNext: boolean;
       nextCursor?: string;
       objects: readonly { key?: string; name: string }[];
@@ -36,8 +38,7 @@ export class SupabaseHistoryStore implements HistoryBlobStore {
   }
 
   async get(key: string): Promise<Uint8Array | undefined> {
-    const storageKey = this.storageKey(key);
-    const response = await this.bucket.download(storageKey);
+    const response = await this.bucket.download(this.storageKey(key));
     if (response.error !== null) {
       if (isNotFound(response.error)) {
         return undefined;
@@ -51,8 +52,7 @@ export class SupabaseHistoryStore implements HistoryBlobStore {
   }
 
   async put(key: string, body: Uint8Array): Promise<void> {
-    const storageKey = this.storageKey(key);
-    const response = await this.bucket.upload(storageKey, body, {
+    const response = await this.bucket.upload(this.storageKey(key), body, {
       cacheControl: '0',
       contentType: 'application/octet-stream',
       upsert: true,
@@ -63,19 +63,31 @@ export class SupabaseHistoryStore implements HistoryBlobStore {
   }
 
   async remove(keys: readonly string[]): Promise<void> {
-    const storageKeys = keys.map((key) => this.storageKey(key));
-    for (let index = 0; index < storageKeys.length; index += REMOVE_BATCH) {
-      const response = await this.bucket.remove(storageKeys.slice(index, index + REMOVE_BATCH));
+    for (let index = 0; index < keys.length; index += REMOVE_BATCH) {
+      const batch = keys.slice(index, index + REMOVE_BATCH).map((key) => this.storageKey(key));
+      const response = await this.bucket.remove(batch);
       if (response.error !== null) {
-        throw storageFailure('history-delete', response.error);
+        throw storageFailure('history-remove', response.error);
       }
     }
   }
 
   async list(prefix: string): Promise<readonly string[]> {
     assertHistoryKey(prefix.endsWith('/') ? `${prefix}x` : prefix);
-    const storagePrefix = `${this.root}${prefix}`;
     const keys: string[] = [];
+    const prefixes = [`${this.root}${prefix}`];
+    const seen = new Set<string>();
+    while (prefixes.length > 0) {
+      const current = prefixes.pop() ?? '';
+      if (current.length > 0 && !seen.has(current)) {
+        seen.add(current);
+        await this.collect(current, keys, prefixes);
+      }
+    }
+    return keys;
+  }
+
+  private async collect(storagePrefix: string, keys: string[], prefixes: string[]): Promise<void> {
     let cursor: string | undefined;
     do {
       const response = await this.bucket.listV2(
@@ -85,15 +97,20 @@ export class SupabaseHistoryStore implements HistoryBlobStore {
       if (response.error !== null || response.data === null) {
         throw storageFailure('history-list', response.error);
       }
+      for (const folder of response.data.folders ?? []) {
+        const name = folder.name.replace(/^\/+/u, '').replace(/\/+$/u, '');
+        if (name.length > 0) {
+          prefixes.push(folderPrefix(storagePrefix, name));
+        }
+      }
       for (const object of response.data.objects) {
-        const key = object.key ?? `${storagePrefix}${object.name}`;
+        const key = listedStorageKey(storagePrefix, object);
         if (key.startsWith(this.root)) {
           keys.push(key.slice(this.root.length));
         }
       }
       cursor = response.data.hasNext ? response.data.nextCursor : undefined;
     } while (cursor !== undefined);
-    return keys;
   }
 
   private storageKey(key: string): string {
@@ -105,6 +122,14 @@ export class SupabaseHistoryStore implements HistoryBlobStore {
     return storageKey;
   }
 }
+
+const folderPrefix = (parent: string, name: string): string => {
+  if (name.startsWith(parent)) {
+    return name.endsWith('/') ? name : `${name}/`;
+  }
+  const base = parent.endsWith('/') ? parent : `${parent}/`;
+  return `${base}${name}/`;
+};
 
 const isNotFound = (error: unknown): boolean => {
   if (typeof error !== 'object' || error === null) {
