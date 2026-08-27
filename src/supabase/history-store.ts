@@ -2,6 +2,7 @@ import { SupabashError } from '../api/errors.js';
 import type { HistoryBlobStore } from '../history/blob-store.js';
 import { HISTORY_ROOT, assertHistoryKey } from '../history/keys.js';
 import { listObjectKeys } from './list-objects.js';
+import { isStorageNotFound } from './not-found.js';
 
 type BucketApi = {
   readonly download: (key: string) => Promise<{ data: Blob | null; error: unknown }>;
@@ -38,7 +39,7 @@ export class SupabaseHistoryStore implements HistoryBlobStore {
   async get(key: string): Promise<Uint8Array | undefined> {
     const response = await this.bucket.download(this.storageKey(key));
     if (response.error !== null) {
-      if (isNotFound(response.error)) {
+      if (isStorageNotFound(response.error)) {
         return undefined;
       }
       throw storageFailure('history-download', response.error);
@@ -85,19 +86,6 @@ export class SupabaseHistoryStore implements HistoryBlobStore {
     return storageKey;
   }
 }
-
-const isNotFound = (error: unknown): boolean => {
-  if (typeof error !== 'object' || error === null) {
-    return false;
-  }
-  if (!('status' in error) && !('statusCode' in error) && !('code' in error)) {
-    return false;
-  }
-  const status = 'status' in error ? error.status : undefined;
-  const statusCode = 'statusCode' in error ? error.statusCode : undefined;
-  const code = 'code' in error ? error.code : undefined;
-  return status === 404 || statusCode === '404' || statusCode === 404 || code === 'not_found';
-};
 
 const storageFailure = (operation: string, cause: unknown): SupabashError =>
   new SupabashError('STORAGE', `Supabase Storage operation failed during ${operation}.`, { cause });

@@ -36,12 +36,22 @@ describe('workspace revisions', () => {
     await workspace.fs.writeFile('/notes.md', 'two\n');
     await workspace.commit();
     const plan = await workspace.restore(first.revision);
-    expect(plan.sourceRevision).toBe(first.revision);
-    await expect(workspace.fs.readFile('/notes.md')).resolves.toBe('one\n');
-    expect(storage.text('/notes.md')).toBe('two\n');
+    expect({
+      changes: workspace.changes().map(({ kind, path }) => ({ kind, path })),
+      live: await workspace.fs.readFile('/notes.md'),
+      remote: storage.text('/notes.md'),
+      source: plan.sourceRevision,
+    }).toStrictEqual({
+      changes: [{ kind: 'upsert', path: '/notes.md' }],
+      live: 'one\n',
+      remote: 'two\n',
+      source: first.revision,
+    });
     const restored = await workspace.commit();
-    expect(restored.parentRevision).toBeTypeOf('string');
-    expect(storage.text('/notes.md')).toBe('one\n');
+    expect({
+      parent: typeof restored.parentRevision,
+      remote: storage.text('/notes.md'),
+    }).toStrictEqual({ parent: 'string', remote: 'one\n' });
   });
 
   test('restores file contents without recreating an unchanged symlink', async () => {

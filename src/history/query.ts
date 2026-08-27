@@ -7,6 +7,21 @@ import { HISTORY_ROOT, historyKey } from './keys.js';
 import type { WorkspaceLimits } from './limits.js';
 import { parseComplete, parseHead } from './parse.js';
 import { historyPageLimit } from './quota.js';
+import type { CompleteRecord } from './records.js';
+
+export const listCompleteRecords = async (
+  history: HistoryBlobStore,
+): Promise<readonly CompleteRecord[]> => {
+  const listed = await history.list(`${HISTORY_ROOT}/transactions/`);
+  const records: CompleteRecord[] = [];
+  for (const key of listed.filter((entry) => entry.endsWith('/complete.json'))) {
+    const complete = await readJson(history, key, parseComplete);
+    if (complete !== undefined) {
+      records.push(complete);
+    }
+  }
+  return records;
+};
 
 export const readHistoryPage = async (
   history: HistoryBlobStore,
@@ -15,32 +30,34 @@ export const readHistoryPage = async (
   limits: WorkspaceLimits = {},
 ): Promise<HistoryPage> => {
   const limit = historyPageLimit(query.limit, limits);
-  const listed = await history.list(`${HISTORY_ROOT}/transactions/`);
-  const keys = listed.filter((key) => key.endsWith('/complete.json'));
-  const records: HistoryRecord[] = [];
-  for (const key of keys) {
-    const complete = await readJson(history, key, parseComplete);
-    if (complete !== undefined) {
-      records.push(historyRecord(complete, scope));
-    }
-  }
-  records.sort((left, right) => {
-    const byTime = left.committedAt.getTime() - right.committedAt.getTime();
-    return byTime === 0 ? comparePaths(left.transactionId, right.transactionId) : byTime;
-  });
-  const start =
-    query.cursor === undefined
-      ? 0
-      : records.findIndex((record) => record.transactionId === query.cursor) + 1;
-  const page = records.slice(Math.max(0, start), Math.max(0, start) + limit);
+  const completes = await listCompleteRecords(history);
+  const records = completes
+    .map((complete) => historyRecord(complete, scope))
+    .toSorted((left, right) => {
+      const byTime = left.committedAt.getTime() - right.committedAt.getTime();
+      return byTime === 0 ? comparePaths(left.transactionId, right.transactionId) : byTime;
+    });
+  const start = historyStart(records, query.cursor);
+  const page = records.slice(start, start + limit);
   const next = page.length === limit ? page.at(-1)?.cursor : undefined;
   return next === undefined ? { records: page } : { nextCursor: next, records: page };
 };
 
-const historyRecord = (
-  complete: Awaited<ReturnType<typeof parseComplete>>,
-  scope: string,
-): HistoryRecord => ({
+const historyStart = (records: readonly HistoryRecord[], cursor: string | undefined): number => {
+  if (cursor === undefined) {
+    return 0;
+  }
+  const index = records.findIndex((record) => record.transactionId === cursor);
+  if (index === -1) {
+    throw new SupabashError(
+      'REVISION_NOT_FOUND',
+      'History cursor does not match a committed transaction.',
+    );
+  }
+  return index + 1;
+};
+
+const historyRecord = (complete: CompleteRecord, scope: string): HistoryRecord => ({
   actor: complete.actor,
   changes: complete.changes,
   committedAt: new Date(complete.committedAt),

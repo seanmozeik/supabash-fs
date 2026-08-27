@@ -10,7 +10,7 @@ import {
 
 import type { WorkspaceEntryKind } from '../api/contracts.js';
 import { SupabashError } from '../api/errors.js';
-import { comparePaths, compareRemoteEntryPaths, orderRemoteEntries } from './entry-order.js';
+import { comparePaths, compareRemoteEntryPaths } from './entry-order.js';
 import {
   isSameOrDescendant,
   moveDescendant,
@@ -19,7 +19,7 @@ import {
   ROOT_PATH,
 } from './path.js';
 import type { PendingChanges, RemoteEntry, UploadDraft } from './storage.js';
-import { pristineRemoteStat, restoreRemoteEntry } from './tracked-restore.js';
+import { pendingAgainstBaseline, pristineRemoteStat, rebuildLiveTree } from './tracked-restore.js';
 
 type ReadOptions = Parameters<IFileSystem['readFile']>[1];
 type WriteOptions = Parameters<IFileSystem['writeFile']>[2];
@@ -27,12 +27,12 @@ type WriteOptions = Parameters<IFileSystem['writeFile']>[2];
 export class TrackedFileSystem implements IFileSystem {
   private baseline = new Map<string, RemoteEntry>();
   private commitInProgress = false;
-  private readonly deletions = new Map<string, RemoteEntry>();
+  private deletions = new Map<string, RemoteEntry>();
   private readonly download: (entry: RemoteEntry) => Promise<Uint8Array>;
   private inner = new InMemoryFs();
   private kinds = new Map<string, WorkspaceEntryKind>([[ROOT_PATH, 'directory']]);
   private readonly maxTotalBytes: number | undefined;
-  private readonly upserts = new Set<string>();
+  private upserts = new Set<string>();
 
   private constructor(
     download: (entry: RemoteEntry) => Promise<Uint8Array>,
@@ -53,20 +53,26 @@ export class TrackedFileSystem implements IFileSystem {
   }
 
   private async reset(entries: readonly RemoteEntry[]): Promise<void> {
-    const options =
-      this.maxTotalBytes === undefined ? undefined : { maxTotalBytes: this.maxTotalBytes };
-    this.inner = new InMemoryFs(undefined, options);
+    const live = await rebuildLiveTree(entries, this.download, false, this.maxTotalBytes);
+    this.inner = live.inner;
+    this.kinds = live.kinds;
     this.baseline = new Map(entries.map((entry) => [entry.path, entry]));
-    this.kinds = new Map([[ROOT_PATH, 'directory']]);
     this.deletions.clear();
     this.upserts.clear();
     this.commitInProgress = false;
+  }
 
-    for (const entry of orderRemoteEntries(entries)) {
-      this.rememberParents(entry.path);
-      this.kinds.set(entry.path, entry.kind);
-      await restoreRemoteEntry(this.inner, entry, this.download);
-    }
+  async stageRemoteTree(
+    entries: readonly RemoteEntry[],
+    download: (entry: RemoteEntry) => Promise<Uint8Array>,
+  ): Promise<void> {
+    this.assertMutable();
+    const live = await rebuildLiveTree(entries, download, true, this.maxTotalBytes);
+    this.inner = live.inner;
+    this.kinds = live.kinds;
+    const pending = pendingAgainstBaseline(this.baseline, entries);
+    this.deletions = pending.deletions;
+    this.upserts = pending.upserts;
   }
 
   beginCommit(): PendingChanges {

@@ -82,7 +82,9 @@ describe('public workspace API', () => {
         .keys()
         .every((key) => key.startsWith('user-a/') || key.startsWith('user-b/')),
       keys: visibleKeys(api.keys()),
-      listPrefixes: api.listPrefixes,
+      listPrefixes: api.listPrefixes.every(
+        (prefix) => prefix.startsWith('user-a/') || prefix.startsWith('user-b/'),
+      ),
       secondSawFirstRoot,
       secondText: api.text('user-b/file.md'),
       storageAuthorizations: new Set(storageCalls.map(({ authorization }) => authorization)),
@@ -90,7 +92,7 @@ describe('public workspace API', () => {
       firstText: 'first user\n',
       historyScoped: true,
       keys: ['user-a/folder', 'user-a/folder/file.md', 'user-a/latest', 'user-b/file.md'],
-      listPrefixes: ['user-a/', 'user-b/'],
+      listPrefixes: true,
       secondSawFirstRoot: false,
       secondText: 'second user\n',
       storageAuthorizations: new Set(['Bearer token-a', 'Bearer token-b']),

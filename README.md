@@ -261,10 +261,14 @@ await workspace.purge({ dryRun: true, maxRevisions: 50 });
   edits.
 - `commit` publishes staged changes and returns an immutable receipt.
 - `discard` drops uncommitted changes only.
-- `history` reads committed transactions with cursor pagination.
+- `history` reads committed transactions with cursor pagination. An unknown
+  cursor fails with `REVISION_NOT_FOUND` instead of restarting the page.
 - `diff` compares two committed revisions, a checkpoint, or staged state.
+  Text file add/delete/modify entries include a `preview` truncated to
+  `previewBytes` (default 8_192). Pass `previewBytes: 0` to skip bodies.
 - `readRevision` returns a read-only historical view.
-- `restore` stages a forward change set. It does not commit.
+- `restore` rebuilds the live tree the same way `open` and `discard` do, then
+  stages the difference against the current baseline. It does not commit.
 - `purge` never makes a retained revision unreadable and can dry-run.
 
 Visible files stay in their filesystem paths. History lives under a private
@@ -306,8 +310,10 @@ The write sequence is:
 6. update `head.json` last
 
 A network failure can stop the sequence after some uploads. The last complete
-revision remains readable. Retry `commit()` on the same workspace after a
-transient failure. A lost optional commit lease fails with
+revision remains readable through `readRevision`. Retry `commit()` on the same
+workspace after a transient failure. Opening a workspace fast-forwards
+`head.json` when a later `complete.json` already exists; that does not make
+Storage publish atomic. A lost optional commit lease fails with
 `COMMIT_COORDINATION` before a complete revision is published.
 
 When no coordinator is supplied, a check-to-write race remains. Another writer

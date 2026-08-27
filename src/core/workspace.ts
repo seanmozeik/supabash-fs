@@ -27,6 +27,7 @@ import { purgeHistory } from '../history/purge.js';
 import { readHistoryPage } from '../history/query.js';
 import { assertCommitQuotas } from '../history/quota.js';
 import { readRevisionView } from '../history/readonly.js';
+import { recoverPublishedHead } from '../history/recover.js';
 import { planRestore } from '../history/restore.js';
 import { overlayByPath } from '../history/snapshot.js';
 import { mapInBatches } from './batches.js';
@@ -48,9 +49,9 @@ export const createStorageWorkspace = async (
   storage: ScopedStorage,
   options: StorageWorkspaceOptions = {},
 ): Promise<Workspace> => {
-  const entries = await storage.list();
+  await recoverPublishedHead(storage.history);
   const filesystem = await TrackedFileSystem.create(
-    entries,
+    await storage.list(),
     (entry) => storage.download(entry),
     options.maxFileSystemBytes,
   );
@@ -224,7 +225,9 @@ class StorageWorkspace implements Workspace {
       const current = await this.storage.head(upload.path);
       const uploadAlreadyApplied = current?.versionHash === upload.versionHash;
       const storageChanged =
-        baseline === undefined ? current !== undefined : !sameOptionalVersion(baseline, current);
+        baseline === undefined
+          ? current !== undefined
+          : current === undefined || !sameRemoteVersion(baseline, current);
       if (!uploadAlreadyApplied && storageChanged) {
         throw conflict(upload.path);
       }
@@ -272,9 +275,6 @@ const visibleCount = (
   }
   return visible.size;
 };
-
-const sameOptionalVersion = (baseline: RemoteEntry, current: RemoteEntry | undefined): boolean =>
-  current !== undefined && sameRemoteVersion(baseline, current);
 
 const sameRemoteVersion = (baseline: RemoteEntry, current: RemoteEntry): boolean => {
   if (baseline.etag !== undefined || current.etag !== undefined) {

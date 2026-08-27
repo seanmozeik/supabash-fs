@@ -38,7 +38,12 @@ describe('workspace publish faults', () => {
     await expect(second.commit()).rejects.toMatchObject(partialError());
     const recovered = await createStorageWorkspace(inner);
     const view = await recovered.readRevision(committed.revision);
-    await expect(view.readFile('/notes.md')).resolves.toBe('one\n');
+    const page = await recovered.history();
+    expect({
+      headFile: await recovered.fs.readFile('/notes.md'),
+      historyCount: page.records.length,
+      previous: await view.readFile('/notes.md'),
+    }).toStrictEqual({ headFile: 'two\n', historyCount: 2, previous: 'one\n' });
   });
 });
 

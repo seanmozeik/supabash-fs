@@ -8,6 +8,7 @@ import type { RemoteEntry, ScopedStorage, UploadEntry } from '../core/storage.js
 import { isHistoryRelative } from '../history/keys.js';
 import { SupabaseHistoryStore } from './history-store.js';
 import { listObjectKeys } from './list-objects.js';
+import { isStorageNotFound } from './not-found.js';
 import {
   contentTypeFor,
   entryFromInfo,
@@ -115,7 +116,7 @@ class SupabaseStorage implements ScopedStorage {
     if (response.error === null) {
       return response.data;
     }
-    if (isNotFound(response.error)) {
+    if (isStorageNotFound(response.error)) {
       return undefined;
     }
     throw storageFailure('head', response.error);
@@ -154,16 +155,6 @@ class SupabaseStorage implements ScopedStorage {
   }
 }
 
-const isNotFound = (error: unknown): boolean => {
-  if (!isRecord(error)) {
-    return false;
-  }
-  const statuses = [error['status'], error['statusCode']];
-  return (
-    statuses.some((status) => status === 404 || status === '404') || error['code'] === 'not_found'
-  );
-};
-
 const assertBucket = (bucket: string): void => {
   if (!SAFE_BUCKET.test(bucket)) {
     throw new SupabashError('AUTHORIZATION', 'Bucket must be one safe storage identifier.');
@@ -187,6 +178,3 @@ const storageFailure = (
     cause,
     ...(options.path !== undefined && { path: options.path }),
   });
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null;

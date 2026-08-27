@@ -10,6 +10,7 @@ import { readJson } from './json-io.js';
 import { historyKey } from './keys.js';
 import type { WorkspaceLimits } from './limits.js';
 import { parseCheckpoint, parseRevision } from './parse.js';
+import { revisionDiffPreview } from './preview.js';
 import { diffPreviewLimit } from './quota.js';
 
 export interface StagedDiffState {
@@ -26,14 +27,14 @@ export const diffRevisions = async (
   const fromState = await resolveRef(history, input.from, staged);
   const toState = await resolveRef(history, input.to, staged);
   const paths = input.paths === undefined ? undefined : new Set(input.paths);
-  diffPreviewLimit(input.previewBytes, limits);
+  const previewBytes = diffPreviewLimit(input.previewBytes, limits);
   const fromMap = new Map(fromState.entries.map((entry) => [entry.path, entry]));
   const toMap = new Map(toState.entries.map((entry) => [entry.path, entry]));
   const allPaths = [...new Set([...fromMap.keys(), ...toMap.keys()])].toSorted();
   const entries: RevisionDiffEntry[] = [];
   for (const path of allPaths) {
     if (paths === undefined || paths.has(path)) {
-      entries.push(diffEntry(fromMap.get(path), toMap.get(path)));
+      entries.push(await diffEntry(history, fromMap.get(path), toMap.get(path), previewBytes));
     }
   }
   return { entries, fromRevision: fromState.label, toRevision: toState.label };
@@ -75,7 +76,18 @@ const resolveRevision = async (
   return { entries: record.entries, label: revision };
 };
 
-const diffEntry = (
+const diffEntry = async (
+  history: HistoryBlobStore,
+  before: RevisionEntry | undefined,
+  after: RevisionEntry | undefined,
+  previewBytes: number,
+): Promise<RevisionDiffEntry> => {
+  const entry = describeDiff(before, after);
+  const preview = await revisionDiffPreview(history, entry.kind, before, after, previewBytes);
+  return preview === undefined ? entry : { ...entry, preview };
+};
+
+const describeDiff = (
   before: RevisionEntry | undefined,
   after: RevisionEntry | undefined,
 ): RevisionDiffEntry => {

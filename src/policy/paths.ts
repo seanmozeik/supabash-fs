@@ -1,5 +1,4 @@
-import { SupabashError } from '../api/errors.js';
-import { ROOT_PATH, normalizeVirtualPath } from '../core/path.js';
+import { ROOT_PATH, VirtualPathError, normalizeVirtualPath } from '../core/path.js';
 import { denyPolicy, type CommandInspectDecision, type PolicyReasonCode } from './types.js';
 
 export type ResolvedPath =
@@ -45,12 +44,11 @@ const isUnboundedGlob = (value: string): boolean =>
   value === '*' || value === '/*' || value === './*' || value === './**' || value === '**';
 
 const pathError = (error: unknown): ResolvedPath => {
-  if (error instanceof SupabashError && error.code === 'INVALID_PATH') {
-    const { message } = error;
-    if (message.includes('reserved')) {
+  if (error instanceof VirtualPathError) {
+    if (error.issue === 'reserved') {
       return deny('reserved-path', 'Command addresses a reserved internal path.');
     }
-    if (message.includes('leave the mounted root')) {
+    if (error.issue === 'out-of-root') {
       return deny('path-out-of-root', 'Command addresses a path outside the mounted root.');
     }
     return deny('ambiguous-path', 'Command contains an ambiguous or encoded path.');

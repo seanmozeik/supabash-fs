@@ -49,6 +49,42 @@ describe('workspace history recovery', () => {
       receiptCursor: true,
       scope: 'scope-a',
     });
+    await expect(workspace.history({ cursor: 'missing-cursor' })).rejects.toMatchObject({
+      code: 'REVISION_NOT_FOUND',
+    });
+  });
+
+  test('fills revision diff previews for text files', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage());
+    await workspace.fs.writeFile('/notes.md', 'one\n');
+    const first = await workspace.commit();
+    await workspace.fs.writeFile('/notes.md', 'two\n');
+    const second = await workspace.commit();
+    const changed = await workspace.diff({
+      from: { revision: first.revision },
+      to: { revision: second.revision },
+    });
+    const empty = await workspace.diff({
+      from: { revision: first.revision },
+      previewBytes: 0,
+      to: { revision: second.revision },
+    });
+    const truncated = await workspace.diff({
+      from: { revision: first.revision },
+      previewBytes: 8,
+      to: { revision: second.revision },
+    });
+    expect({
+      empty: empty.entries[0]?.preview,
+      kind: changed.entries[0]?.kind,
+      preview: changed.entries[0]?.preview,
+      truncated: truncated.entries[0]?.preview?.includes('[truncated]'),
+    }).toStrictEqual({
+      empty: undefined,
+      kind: 'modified',
+      preview: '--- before\none\n+++ after\ntwo\n',
+      truncated: true,
+    });
   });
 
   test('purge dry-run reports unreferenced objects without deleting them', async () => {

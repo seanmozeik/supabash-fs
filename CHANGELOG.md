@@ -29,6 +29,11 @@ Agent workspace APIs on top of the authenticated Storage filesystem.
 - Checkpoint names a revision and never publishes staged edits.
 - History page size and diff preview limits are enforced. Commit probes
   existing content-addressed objects before downloading file bodies.
+- Unknown history cursors fail instead of restarting at page 0.
+- Restore rebuilds the live tree through the same installer as open/discard
+  and stages the result against the current baseline.
+- Open fast-forwards `head.json` when a later complete transaction exists.
+- Diff emits truncated text previews for added, deleted, and modified files.
 
 ## 0.1.0
 

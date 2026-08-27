@@ -12,7 +12,10 @@ describe('virtual paths', () => {
   test('normalizes paths without allowing a root escape', () => {
     expect(normalizeVirtualPath('docs/./guides/../readme.md')).toBe('/docs/readme.md');
     expect(() => normalizeVirtualPath('/../../another-user/file.md')).toThrow(
-      expect.objectContaining({ code: 'INVALID_PATH' }),
+      expect.objectContaining({ code: 'INVALID_PATH', issue: 'out-of-root' }),
+    );
+    expect(() => normalizeVirtualPath('/.supabash/head.json')).toThrow(
+      expect.objectContaining({ code: 'INVALID_PATH', issue: 'reserved' }),
     );
   });
 

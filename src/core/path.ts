@@ -3,6 +3,18 @@ import { SupabashError } from '../api/errors.js';
 const ENCODED_PATH_SYNTAX = /%(?:2e|2f|5c)/iu;
 const RESERVED_SEGMENTS = new Set(['.supabash', '.supabash-directory']);
 
+export type VirtualPathIssue = 'ambiguous' | 'out-of-root' | 'reserved';
+
+export class VirtualPathError extends SupabashError {
+  readonly issue: VirtualPathIssue;
+
+  constructor(path: string, message: string, issue: VirtualPathIssue) {
+    super('INVALID_PATH', message, { path });
+    this.name = 'VirtualPathError';
+    this.issue = issue;
+  }
+}
+
 export const ROOT_PATH = '/';
 
 export const normalizeVirtualPath = (input: string): string => {
@@ -21,12 +33,12 @@ export const normalizeVirtualPath = (input: string): string => {
     if (segment !== '' && segment !== '.') {
       if (segment === '..') {
         if (segments.length === 0) {
-          throw invalidPath(input, 'Path attempts to leave the mounted root.');
+          throw invalidPath(input, 'Path attempts to leave the mounted root.', 'out-of-root');
         }
         segments.pop();
       } else {
         if (RESERVED_SEGMENTS.has(segment)) {
-          throw invalidPath(input, `Path segment '${segment}' is reserved.`);
+          throw invalidPath(input, `Path segment '${segment}' is reserved.`, 'reserved');
         }
         segments.push(segment);
       }
@@ -92,5 +104,8 @@ const hasControlCharacter = (input: string): boolean =>
     return codePoint !== undefined && (codePoint <= 31 || codePoint === 127);
   });
 
-const invalidPath = (path: string, message: string): SupabashError =>
-  new SupabashError('INVALID_PATH', message, { path });
+const invalidPath = (
+  path: string,
+  message: string,
+  issue: VirtualPathIssue = 'ambiguous',
+): VirtualPathError => new VirtualPathError(path, message, issue);
