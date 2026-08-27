@@ -21,4 +21,16 @@ describe('package metadata', () => {
     });
     expect(dependencyNames).not.toContain('effect');
   });
+
+  test('keeps AI SDK integration on an optional export subpath', () => {
+    expect(packageJson.exports['./ai-sdk']).toStrictEqual({
+      import: './dist/ai-sdk.js',
+      types: './dist/ai-sdk/index.d.ts',
+    });
+    expect(packageJson.peerDependenciesMeta).toMatchObject({
+      '@ai-sdk/openai': { optional: true },
+      ai: { optional: true },
+      'bash-tool': { optional: true },
+    });
+  });
 });

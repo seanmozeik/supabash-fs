@@ -5,6 +5,7 @@ export type SupabashErrorCode =
   | 'COMMIT_IN_PROGRESS'
   | 'INVALID_PATCH'
   | 'INVALID_PATH'
+  | 'POLICY_DENIED'
   | 'QUOTA_EXCEEDED'
   | 'STORAGE'
   | 'UNSUPPORTED_CONTENT';
