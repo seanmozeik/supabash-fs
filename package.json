@@ -38,7 +38,7 @@
     "audit:production": "bun audit --production",
     "build": "bun run build:clean && bun run build:js && bun run build:types",
     "build:clean": "bun ./scripts/clean-dist.ts",
-    "build:js": "bun build ./src/api/supabash.ts --outfile ./dist/index.js --target browser --format esm --packages external",
+    "build:js": "bun build ./src/index.ts --outfile ./dist/index.js --target browser --format esm --packages external",
     "build:smoke": "bun ./scripts/check-built-package.mjs",
     "build:types": "tsc -p tsconfig.build.json",
     "check:deno": "deno check --config deno.json tests/deno/live-supabase.ts",

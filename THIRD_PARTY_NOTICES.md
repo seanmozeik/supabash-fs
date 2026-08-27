@@ -23,4 +23,20 @@ following open-source projects.
 - Compatible package version during development: `3.4.2`
 - Licence: Apache-2.0
 
+## OpenAI Agents SDK applyDiff
+
+- Source: <https://github.com/openai/openai-agents-js>
+- Package: `@openai/agents-core` `0.16.1`
+- Copied files:
+  - `packages/agents-core/src/utils/applyDiff.ts`
+  - `packages/agents-core/test/utils/applyDiff.test.ts`
+- Reviewed commit: `56c3dfb15b91baa50d70dea12f7565cc69822494`
+- Copyright: Copyright (c) 2025 OpenAI
+- Licence: MIT
+
+The V4A parser lives in `src/patch/apply-diff.ts` and the `src/patch/v4a-*.ts`
+modules. Local adaptations are a file split for the source-size limit, strict
+TypeScript guards for missing lines, and ESM named exports. The `applyDiff`
+behavior matches the copied implementation.
+
 Each third-party project remains under its own licence terms.

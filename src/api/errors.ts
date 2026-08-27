@@ -3,8 +3,11 @@ export type SupabashErrorCode =
   | 'AUTHORIZATION'
   | 'COMMIT_CONFLICT'
   | 'COMMIT_IN_PROGRESS'
+  | 'INVALID_PATCH'
   | 'INVALID_PATH'
-  | 'STORAGE';
+  | 'QUOTA_EXCEEDED'
+  | 'STORAGE'
+  | 'UNSUPPORTED_CONTENT';
 
 export interface SupabashErrorOptions {
   readonly cause?: unknown;
