@@ -1,10 +1,10 @@
 import type { PurgeOptions, PurgeReceipt } from '../api/history.js';
-import { comparePaths } from '../core/entry-order.js';
 import type { HistoryBlobStore } from './blob-store.js';
 import { readJson } from './json-io.js';
 import { HISTORY_ROOT, historyKey } from './keys.js';
 import { DEFAULT_MAX_REVISIONS_RETAINED } from './limits.js';
 import { parseCheckpoint, parseHead, parseRevision } from './parse.js';
+import type { HeadRecord, RevisionRecord } from './records.js';
 
 export const purgeHistory = async (
   history: HistoryBlobStore,
@@ -12,34 +12,16 @@ export const purgeHistory = async (
 ): Promise<PurgeReceipt> => {
   const maxRevisions = options.maxRevisions ?? DEFAULT_MAX_REVISIONS_RETAINED;
   const head = await readJson(history, historyKey.head, parseHead);
-  const listedRevisions = await history.list(`${HISTORY_ROOT}/revisions/`);
-  const revisionKeys = listedRevisions.filter((key) => key.endsWith('.json'));
-  const records = [];
-  for (const key of revisionKeys) {
-    const record = await readJson(history, key, parseRevision);
-    if (record !== undefined) {
-      records.push(record);
-    }
-  }
-  records.sort((left, right) => comparePaths(left.committedAt, right.committedAt));
-  const pinned = new Set<string>();
-  if (head !== undefined) {
-    pinned.add(head.revision);
-  }
-  const listedCheckpoints = await history.list(`${HISTORY_ROOT}/checkpoints/`);
-  for (const key of listedCheckpoints) {
-    const checkpoint = await readJson(history, key, parseCheckpoint);
-    if (checkpoint !== undefined) {
-      pinned.add(checkpoint.revision);
-    }
-  }
+  const records = await loadRevisions(history);
+  const pinned = await pinnedRevisions(history, head);
+  const keptByCount = keepRecent(records, head, maxRevisions);
   const cutoff = options.maxAgeMs === undefined ? undefined : Date.now() - options.maxAgeMs;
-  const removable = records.filter((record, index) => {
+  const removable = records.filter((record) => {
     if (pinned.has(record.revision)) {
       return false;
     }
     const tooOld = cutoff !== undefined && Date.parse(record.committedAt) < cutoff;
-    const tooMany = index < records.length - maxRevisions;
+    const tooMany = !keptByCount.has(record.revision);
     return tooOld || tooMany;
   });
   const removableSet = new Set(removable);
@@ -62,6 +44,60 @@ export const purgeHistory = async (
     await history.remove(objects);
   }
   return { bytes, dryRun: options.dryRun === true, objects };
+};
+
+const loadRevisions = async (history: HistoryBlobStore): Promise<RevisionRecord[]> => {
+  const listed = await history.list(`${HISTORY_ROOT}/revisions/`);
+  const records: RevisionRecord[] = [];
+  for (const key of listed) {
+    if (key.endsWith('.json')) {
+      const record = await readJson(history, key, parseRevision);
+      if (record !== undefined) {
+        records.push(record);
+      }
+    }
+  }
+  return records;
+};
+
+const pinnedRevisions = async (
+  history: HistoryBlobStore,
+  head: HeadRecord | undefined,
+): Promise<Set<string>> => {
+  const pinned = new Set<string>();
+  if (head !== undefined) {
+    pinned.add(head.revision);
+  }
+  const listed = await history.list(`${HISTORY_ROOT}/checkpoints/`);
+  for (const key of listed) {
+    const checkpoint = await readJson(history, key, parseCheckpoint);
+    if (checkpoint !== undefined) {
+      pinned.add(checkpoint.revision);
+    }
+  }
+  return pinned;
+};
+
+const keepRecent = (
+  records: readonly RevisionRecord[],
+  head: HeadRecord | undefined,
+  maxRevisions: number,
+): Set<string> => {
+  const byRevision = new Map<string, RevisionRecord>();
+  for (const record of records) {
+    byRevision.set(record.revision, record);
+  }
+  const kept = new Set<string>();
+  let current = head?.revision;
+  while (typeof current === 'string' && kept.size < maxRevisions) {
+    if (kept.has(current)) {
+      return kept;
+    }
+    kept.add(current);
+    const parent = byRevision.get(current)?.parentRevision;
+    current = typeof parent === 'string' ? parent : undefined;
+  }
+  return kept;
 };
 
 const hashesOf = (record: { entries: readonly { contentHash?: string }[] }): readonly string[] =>

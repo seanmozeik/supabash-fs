@@ -1,3 +1,4 @@
+import { openDelegated } from '../capability/open.js';
 import { sha256 } from '../core/hash.js';
 import { createStorageWorkspace } from '../core/workspace.js';
 import { authenticate } from '../supabase/auth.js';
@@ -24,4 +25,4 @@ const open = async (options: SupabashOptions): Promise<Workspace> => {
   });
 };
 
-export const Supabash = Object.freeze({ open });
+export const Supabash = Object.freeze({ open, openDelegated });

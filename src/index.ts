@@ -4,8 +4,11 @@
  */
 /* oxlint-disable unicorn/prefer-export-from -- bun drops `export { name } from` as empty stubs */
 
+import { CAPABILITY_SCHEMA_VERSION as capabilitySchemaVersion } from './api/capability.js';
 import { HISTORY_SCHEMA_VERSION as historySchemaVersion } from './api/commit.js';
 import { Supabash as openWorkspace, SupabashError as WorkspaceError } from './api/supabash.js';
+import { createDelegatedCapability as signDelegatedCapability } from './capability/create.js';
+import { verifyDelegatedCapability as checkDelegatedCapability } from './capability/verify.js';
 import {
   DEFAULT_MAX_DIFF_PREVIEW_BYTES as defaultMaxDiffPreviewBytes,
   DEFAULT_MAX_FILE_SIZE as defaultMaxFileSize,
@@ -29,6 +32,15 @@ import {
   DEFAULT_MAX_SEGMENTS as defaultMaxSegments,
 } from './policy/types.js';
 
+export type {
+  CapabilityNonceStore,
+  CreateDelegatedCapabilityInput,
+  DelegatedCapabilityClaims,
+  DelegatedOperation,
+  DelegatedVerifier,
+  OpenDelegatedOptions,
+  VerifyDelegatedCapabilityInput,
+} from './api/capability.js';
 export type {
   CommitReceipt,
   Workspace,
@@ -81,6 +93,7 @@ export type {
   PolicyReasonCode,
 } from './policy/types.js';
 
+export const CAPABILITY_SCHEMA_VERSION = capabilitySchemaVersion;
 export const DEFAULT_MAX_COMMAND_LENGTH = defaultMaxCommandLength;
 export const DEFAULT_MAX_DIFF_PREVIEW_BYTES = defaultMaxDiffPreviewBytes;
 export const DEFAULT_MAX_FILE_SIZE = defaultMaxFileSize;
@@ -100,3 +113,5 @@ export const applyDiff = applyV4ADiff;
 export const applyPatch = applyWorkspacePatch;
 export const applyPatchOperations = applyWorkspacePatchOperations;
 export const createCommandPolicy = createWorkspaceCommandPolicy;
+export const createDelegatedCapability = signDelegatedCapability;
+export const verifyDelegatedCapability = checkDelegatedCapability;

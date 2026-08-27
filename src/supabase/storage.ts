@@ -31,11 +31,10 @@ interface ListedObject {
 export const createSupabaseStorage = (
   client: SupabaseClient,
   bucket: string,
-  userId: string,
+  prefix: string,
 ): ScopedStorage => {
   assertBucket(bucket);
-  assertRootSegment(userId);
-  return new SupabaseStorage(client.storage.from(bucket), `${userId}/`);
+  return new SupabaseStorage(client.storage.from(bucket), storageRoot(prefix));
 };
 
 class SupabaseStorage implements ScopedStorage {
@@ -197,14 +196,13 @@ const assertBucket = (bucket: string): void => {
   }
 };
 
-const assertRootSegment: (userId: unknown) => asserts userId is string = (userId) => {
-  if (!isSafeRootSegment(userId)) {
-    throw new SupabashError('AUTHORIZATION', 'Verified user ID is not a safe storage segment.');
+const storageRoot = (prefix: string): string => {
+  const segments = prefix.split('/').filter((segment) => segment.length > 0);
+  if (segments.length === 0 || segments.some((segment) => !SAFE_ROOT_SEGMENT.test(segment))) {
+    throw new SupabashError('AUTHORIZATION', 'Workspace prefix is not a safe storage path.');
   }
+  return `${segments.join('/')}/`;
 };
-
-const isSafeRootSegment = (value: unknown): value is string =>
-  typeof value === 'string' && SAFE_ROOT_SEGMENT.test(value);
 
 const storageFailure = (
   operation: string,
