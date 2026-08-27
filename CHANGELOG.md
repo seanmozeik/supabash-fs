@@ -18,6 +18,7 @@ Agent workspace APIs on top of the authenticated Storage filesystem.
 - Expose a stable commit/history cursor for later derived indexes.
 - Prove mixed-tool, history, restore, and delegated isolation against a local
   Supabase Docker stack from Deno 2.
+- Reopen dangling symbolic links without following their missing targets.
 
 ## 0.1.0
 
