@@ -16,11 +16,13 @@ export const restoreRemoteEntry = async (
     );
     return;
   }
-  await (entry.kind === 'directory'
-    ? inner.mkdir(entry.path, { recursive: true })
-    : inner.symlink(entry.target ?? '', entry.path));
-  await inner.chmod(entry.path, entry.mode);
-  await inner.utimes(entry.path, entry.modifiedAt, entry.modifiedAt);
+  if (entry.kind === 'directory') {
+    await inner.mkdir(entry.path, { recursive: true });
+    await inner.chmod(entry.path, entry.mode);
+    await inner.utimes(entry.path, entry.modifiedAt, entry.modifiedAt);
+    return;
+  }
+  await inner.symlink(entry.target ?? '', entry.path);
 };
 
 export const pristineRemoteStat = (

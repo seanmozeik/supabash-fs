@@ -71,6 +71,20 @@ describe('storage workspace', () => {
     await expect(reopened.fs.readlink('/shortcut')).resolves.toBe('/empty');
   });
 
+  test('reopens a dangling symbolic link without following its target', async () => {
+    const storage = new MemoryStorage();
+    const workspace = await createStorageWorkspace(storage);
+    await workspace.fs.writeFile('/notes.md', 'one\n');
+    await workspace.fs.symlink('/notes.md', '/current');
+    await workspace.commit();
+    await workspace.fs.rm('/notes.md');
+    await workspace.commit();
+
+    const reopened = await createStorageWorkspace(storage);
+    await expect(reopened.fs.readlink('/current')).resolves.toBe('/notes.md');
+    await expect(reopened.fs.exists('/notes.md')).resolves.toBe(false);
+  });
+
   test('discards staged changes without another storage read', async () => {
     const storage = seededStorage();
     const workspace = await createStorageWorkspace(storage);

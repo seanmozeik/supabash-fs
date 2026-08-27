@@ -158,8 +158,13 @@ await proveDelegatedAccess({
 });
 
 const cleanupFirst = await open(firstToken);
-for (const path of ['/notes', '/current', '/notes.md', '/delegated.md']) {
-  if (await cleanupFirst.fs.exists(path)) {
+for (const path of ['/current', '/notes.md', '/delegated.md', '/notes']) {
+  if (
+    await cleanupFirst.fs.lstat(path).then(
+      () => true,
+      () => false,
+    )
+  ) {
     await cleanupFirst.fs.rm(path, { recursive: true });
   }
 }
