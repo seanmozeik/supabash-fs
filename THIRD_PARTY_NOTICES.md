@@ -39,4 +39,38 @@ modules. Local adaptations are a file split for the source-size limit, strict
 TypeScript guards for missing lines, and ESM named exports. The `applyDiff`
 behavior matches the copied implementation.
 
+```
+MIT License
+
+Copyright (c) 2025 OpenAI
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Tripwire
+
+- Source: local design reference at development time
+- Package observed during planning: `@seanmozeik/tripwire` `0.6.7`
+- Licence: MIT
+
+No Tripwire source was copied. The Bash command policy is new Deno-safe code
+that reuses only the segment-then-independent-rule design. Effect, Bun.Glob,
+and Tripwire's opinionated toolchain denies are not used.
+
 Each third-party project remains under its own licence terms.
