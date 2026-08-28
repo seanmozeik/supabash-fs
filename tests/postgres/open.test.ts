@@ -95,6 +95,28 @@ describe('public Postgres workspace API', () => {
     ).rejects.toMatchObject({ code: 'STORAGE' });
     expect(nonceStore.consume).not.toHaveBeenCalled();
   });
+
+  test('requires read permission to project a delegated Postgres workspace', async () => {
+    const keys = await ed25519Pair();
+    const claims = { ...postgresClaims(), ops: ['history'] as const };
+    const capability = await createDelegatedCapability({
+      claims,
+      keyId: 'k1',
+      privateKey: keys.privateKey,
+    });
+    const api = new FakePostgresApi(claims);
+
+    await expect(
+      Supabash.openPostgresDelegated({
+        capability,
+        fetch: api.fetch,
+        serviceRoleKey: 'sb_secret_test',
+        supabaseUrl: claims.origin,
+        verifier: verifierFor(keys.publicKey),
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_CAPABILITY' });
+    expect(api.calls).toStrictEqual([]);
+  });
 });
 
 interface ApiCall {

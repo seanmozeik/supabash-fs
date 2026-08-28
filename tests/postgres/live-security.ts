@@ -58,10 +58,14 @@ const proveIsolation = async (
   }
   for (const table of [
     'bodies',
+    'capability_nonces',
+    'capability_verifiers',
     'checkpoints',
     'current_documents',
+    'delegated_grants',
     'revision_changes',
     'revision_entries',
+    'settings',
     'workspace_revisions',
     'workspaces',
   ]) {
@@ -187,6 +191,21 @@ const proveDelegated = async (
     'AUTHORIZATION',
     'Delegated capability exceeded its admitted operations.',
   );
+
+  const restoreCapability = await createDelegatedCapability({
+    claims: { ...claims, nonce: `${context.runId}-delegated-restore`, ops: ['read', 'restore'] },
+    keyId: 'integration',
+    privateKey: keys.privateKey,
+  });
+  const restoreOnly = await Supabash.openPostgresDelegated({
+    capability: restoreCapability,
+    serviceRoleKey: context.serviceRoleKey,
+    supabaseUrl: context.supabaseUrl,
+    verifier,
+  });
+  const restorePlan = await restoreOnly.restore(core.seed.revision);
+  assert(restorePlan.sourceRevision === core.seed.revision, 'Delegated restore was denied.');
+  await expectCode(restoreOnly.history(), 'AUTHORIZATION', 'Restore-only capability read history.');
 
   const grantCapability = await createDelegatedCapability({
     claims: { ...claims, nonce: `${context.runId}-delegated-grant` },

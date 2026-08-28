@@ -89,6 +89,24 @@ describe('workspace history recovery', () => {
     });
   });
 
+  test('truncates diff preview content at a valid UTF-8 byte boundary', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage());
+    await workspace.fs.writeFile('/notes.md', '🙂🙂🙂');
+    const first = await workspace.commit();
+    await workspace.fs.writeFile('/notes.md', 'changed');
+    const second = await workspace.commit();
+    const diff = await workspace.diff({
+      from: { revision: first.revision },
+      previewBytes: 13,
+      to: { revision: second.revision },
+    });
+    const preview = diff.entries[0]?.preview;
+    expect(preview).toContain('[truncated]');
+    const prefix = preview?.split('\n[truncated]\n')[0] ?? '';
+    expect(new TextEncoder().encode(prefix).byteLength).toBeLessThanOrEqual(13);
+    expect(prefix.endsWith('\uFFFD')).toBe(false);
+  });
+
   test('orders same-millisecond commits by parent revision', async () => {
     const storage = new MemoryStorage();
     const workspace = await createStorageWorkspace(storage);

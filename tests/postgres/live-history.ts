@@ -10,6 +10,7 @@ export const proveHistoryAndRetention = async (
   core: CoreProof,
 ): Promise<HistoryProof> => {
   const checkpointId = await proveHistory(context, core);
+  await proveCausalOrdering(context, core.user.accessToken);
   await proveIdempotency(context, core.user.accessToken);
   await provePurge(context, core.user.accessToken);
   await proveManifestGrowth(context, core.user.accessToken);
@@ -50,9 +51,24 @@ const proveHistory = async (context: LiveContext, core: CoreProof): Promise<stri
     'Checkpoint listing omitted the pin.',
   );
   await workspace.fs.writeFile('/dirty.md', 'later\n');
+  await workspace.fs.writeFile('/unicode-preview.md', '🙂🙂🙂');
   const dirty = await workspace.commit({
     context: { actor: 'restore-source', correlationId: `${context.runId}-dirty` },
   });
+  const unicodeDiff = await workspace.diff({
+    from: { revision: core.atomic.revision },
+    previewBytes: 5,
+    to: { revision: dirty.revision },
+  });
+  const unicodePreview = unicodeDiff.entries.find(
+    ({ path }) => path === '/unicode-preview.md',
+  )?.preview;
+  assert(unicodePreview?.includes('[truncated]') === true, 'Unicode preview was not truncated.');
+  const previewPrefix = unicodePreview.split('\n[truncated]\n')[0] ?? '';
+  assert(
+    new TextEncoder().encode(previewPrefix).byteLength <= 5,
+    'Unicode preview exceeded its byte limit.',
+  );
   const plan = await workspace.restore(core.seed.revision);
   assert(plan.sourceRevision === core.seed.revision, 'Restore planned the wrong revision.');
   const restored = await workspace.commit({
@@ -65,6 +81,32 @@ const proveHistory = async (context: LiveContext, core: CoreProof): Promise<stri
   assert(!(await reopened.fs.exists('/dirty.md')), 'Restore retained a later document.');
   context.record('history, diff, checkpoints, historical reads, and forward restore');
   return checkpoint.checkpointId;
+};
+
+const proveCausalOrdering = async (context: LiveContext, accessToken: string): Promise<void> => {
+  const workspaceId = await context.createWorkspace(accessToken);
+  const workspace = await context.open(accessToken, workspaceId);
+  await workspace.fs.writeFile('/order.md', 'first\n');
+  const first = await workspace.commit();
+  await workspace.fs.writeFile('/order.md', 'second\n');
+  const second = await workspace.commit();
+  await workspace.fs.writeFile('/order.md', 'third\n');
+  const third = await workspace.commit();
+  await context.serviceRpc('supabash_test_set_revision_time', {
+    p_committed_at: '2026-01-01T00:00:00.000Z',
+    p_revision_ids: [first.revision, second.revision, third.revision],
+    p_workspace_id: workspaceId,
+  });
+  const firstPage = await workspace.history({ limit: 2 });
+  const cursor = firstPage.nextCursor;
+  assert(typeof cursor === 'string', 'Equal-time history did not return a page cursor.');
+  const secondPage = await workspace.history({ cursor, limit: 2 });
+  assert(
+    [...firstPage.records, ...secondPage.records].map(({ revision }) => revision).join(',') ===
+      [first.revision, second.revision, third.revision].join(','),
+    'Equal-time history did not follow the parent chain.',
+  );
+  context.record('equal-time history follows the parent chain');
 };
 
 const proveIdempotency = async (context: LiveContext, accessToken: string): Promise<void> => {
@@ -112,17 +154,26 @@ const provePurge = async (context: LiveContext, accessToken: string): Promise<vo
       ({ checkpointId } = checkpoint);
     }
   }
+  await context.serviceRpc('supabash_test_set_revision_time', {
+    p_committed_at: '2026-01-01T00:00:00.000Z',
+    p_revision_ids: revisions,
+    p_workspace_id: workspaceId,
+  });
   const dryRun = await workspace.purge({ dryRun: true, maxRevisions: 1 });
   assert(dryRun.dryRun && dryRun.objects.length >= 1, 'Purge dry run found no revisions.');
   const applied = await workspace.purge({ maxRevisions: 1 });
   assert(!applied.dryRun, 'Applied purge reported a dry run.');
   const history = await workspace.history({ limit: 100 });
   const retained = new Set(history.records.map(({ revision }) => revision));
-  assert(retained.has(revisions[0] ?? ''), 'Purge removed a checkpointed revision.');
-  assert(retained.has(revisions[3] ?? ''), 'Purge removed the head.');
-  assert(
-    !retained.has(revisions[1] ?? '') && !retained.has(revisions[2] ?? ''),
-    'Purge retained old revisions.',
+  const [checkpointedRevision, removedRevision, , headRevision] = revisions;
+  assert(retained.has(headRevision ?? ''), 'Purge removed the head.');
+  assert(checkpointedRevision !== undefined, 'Checkpointed revision is missing.');
+  await workspace.readRevision(checkpointedRevision);
+  assert(removedRevision !== undefined, 'Removable revision is missing.');
+  await expectCode(
+    workspace.readRevision(removedRevision),
+    'REVISION_NOT_FOUND',
+    'Purge retained an unpinned old revision.',
   );
   await workspace.deleteCheckpoint(checkpointId);
   context.record('retention purge preserves the head and checkpoint pins');

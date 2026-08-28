@@ -1,4 +1,5 @@
 import { SupabashError } from '../api/errors.js';
+import type { PurgeOptions } from '../api/history.js';
 import type { JsonValue } from '../api/json.js';
 import type { UploadEntry } from '../core/storage.js';
 import {
@@ -9,6 +10,7 @@ import {
   DEFAULT_MAX_STAGED_BYTES,
   DEFAULT_MAX_TRANSACTION_METADATA_BYTES,
   DEFAULT_MAX_VISIBLE_FILES,
+  DEFAULT_MAX_REVISIONS_RETAINED,
   type WorkspaceLimits,
 } from './limits.js';
 
@@ -101,4 +103,21 @@ export const diffPreviewLimit = (
     throw quota('Diff preview size is outside the allowed range.');
   }
   return previewBytes;
+};
+
+export const normalizePurgeOptions = (
+  options: PurgeOptions,
+): PurgeOptions & { readonly maxRevisions: number } => {
+  const maxRevisions = options.maxRevisions ?? DEFAULT_MAX_REVISIONS_RETAINED;
+  assertPurgeLimit(maxRevisions, 'maxRevisions');
+  if (options.maxAgeMs !== undefined) {
+    assertPurgeLimit(options.maxAgeMs, 'maxAgeMs');
+  }
+  return { ...options, maxRevisions };
+};
+
+const assertPurgeLimit = (value: number, name: string): void => {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw quota(`${name} must be a non-negative safe integer.`);
+  }
 };

@@ -592,6 +592,11 @@ const workspace = await Supabash.openPostgresDelegated({
 });
 ```
 
+`openPostgresDelegated` requires `read` because opening a `Workspace` projects
+its pinned text snapshot into the staged filesystem. Add only the other
+operations that the job needs. A `restore` capability can plan a forward
+restore without also granting `history`.
+
 Register each allowed Ed25519 public key in
 `supabash.capability_verifiers` as the database owner. The SQL verifies the
 JWS, consumes its nonce, and returns an opaque short-lived grant bound to the

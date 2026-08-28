@@ -58,6 +58,12 @@ export const openPostgresDelegated = async (
   if (claims.origin !== options.supabaseUrl) {
     throw new SupabashError('INVALID_CAPABILITY', 'Capability origin does not match open options.');
   }
+  if (!claims.ops.includes('read')) {
+    throw new SupabashError(
+      'INVALID_CAPABILITY',
+      'A delegated Postgres workspace open requires the read operation.',
+    );
+  }
 
   const client = createClient(options.supabaseUrl, options.serviceRoleKey, {
     auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },

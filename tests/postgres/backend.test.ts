@@ -140,6 +140,62 @@ describe('postgres backend', () => {
     const firstMutation = Array.isArray(mutations) ? asUnknownRecord(mutations[0]) : undefined;
     expect(firstMutation?.['bodyHash']).toMatch(/^[0-9a-f]{64}$/u);
   });
+
+  test('normalizes history and purge limits before an RPC', async () => {
+    let purgeArguments: Readonly<Record<string, JsonValue>> | undefined;
+    const rpc = vi.fn<PostgresRpcClient['rpc']>((name, args) => {
+      if (name === 'supabash_load_workspace') {
+        return Promise.resolve({ data: emptySnapshot(), error: null });
+      }
+      if (name === 'supabash_purge') {
+        purgeArguments = args;
+        return Promise.resolve({ data: { bytes: 0, dryRun: false, objects: [] }, error: null });
+      }
+      return Promise.resolve({ data: { records: [] }, error: null });
+    });
+    const opened = await createBackendWorkspace(
+      createPostgresBackend({ client: { rpc }, workspace }),
+      { limits: { maxHistoryPageSize: 1 } },
+    );
+
+    await expect(opened.history({ limit: 2 })).rejects.toMatchObject({ code: 'QUOTA_EXCEEDED' });
+    await expect(opened.purge({ maxAgeMs: -1 })).rejects.toMatchObject({ code: 'QUOTA_EXCEEDED' });
+    await opened.purge({});
+    expect(purgeArguments).toMatchObject({ p_max_revisions: 50 });
+    expect(rpc).toHaveBeenCalledTimes(2);
+  });
+
+  test('sends an existing-destination move as one atomic move mutation', async () => {
+    let commitArguments: Readonly<Record<string, JsonValue>> | undefined;
+    const rpc = vi.fn<PostgresRpcClient['rpc']>((name, args) => {
+      if (name !== 'supabash_load_workspace') {
+        commitArguments = args;
+      }
+      return Promise.resolve(
+        name === 'supabash_load_workspace'
+          ? { data: overwriteSnapshot(), error: null }
+          : { data: null, error: { message: 'stop after capture' } },
+      );
+    });
+    const opened = await createBackendWorkspace(
+      createPostgresBackend({ client: { rpc }, workspace }),
+    );
+    await opened.fs.mv('/source.md', '/destination.md');
+
+    await expect(opened.commit()).rejects.toMatchObject({ code: 'STORAGE' });
+    expect(commitArguments).toMatchObject({
+      p_changes: [{ from: '/source.md', kind: 'move', path: '/destination.md' }],
+      p_receipt_changes: [
+        {
+          beforeHash: 'b'.repeat(64),
+          kind: 'move',
+          moveFrom: '/source.md',
+          moveTo: '/destination.md',
+          path: '/destination.md',
+        },
+      ],
+    });
+  });
 });
 
 const emptySnapshot = () => ({ documents: [], headRevision: null });
@@ -149,4 +205,12 @@ const snapshot = () => ({
   documents: [{ body: 'héllo\n', bodyHash: 'a'.repeat(64), byteSize: 7, path: '/notes/a.md' }],
   headRevision: '223e4567-e89b-42d3-a456-426614174000',
   transactionId: '323e4567-e89b-42d3-a456-426614174000',
+});
+
+const overwriteSnapshot = () => ({
+  ...snapshot(),
+  documents: [
+    { body: 'destination\n', bodyHash: 'c'.repeat(64), byteSize: 12, path: '/destination.md' },
+    { body: 'source\n', bodyHash: 'b'.repeat(64), byteSize: 7, path: '/source.md' },
+  ],
 });

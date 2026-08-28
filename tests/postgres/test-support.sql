@@ -110,13 +110,30 @@ as $function$
     active = true;
 $function$;
 
+create or replace function public.supabash_test_set_revision_time(
+  p_workspace_id uuid,
+  p_revision_ids uuid[],
+  p_committed_at timestamptz
+)
+returns void
+language sql
+security definer
+set search_path = pg_catalog, supabash
+as $function$
+  update supabash.workspace_revisions
+  set committed_at = p_committed_at
+  where workspace_id = p_workspace_id and revision_id = any(p_revision_ids);
+$function$;
+
 revoke all on function public.supabash_test_fail_next_commit(uuid) from public, anon, authenticated;
 revoke all on function public.supabash_test_clear_commit_failure(uuid) from public, anon, authenticated;
 revoke all on function public.supabash_test_manifest_stats(uuid) from public, anon, authenticated;
 revoke all on function public.supabash_test_register_verifier(text, text, text, text, text) from public, anon, authenticated;
+revoke all on function public.supabash_test_set_revision_time(uuid, uuid[], timestamptz) from public, anon, authenticated;
 grant execute on function public.supabash_test_fail_next_commit(uuid) to service_role;
 grant execute on function public.supabash_test_clear_commit_failure(uuid) to service_role;
 grant execute on function public.supabash_test_manifest_stats(uuid) to service_role;
 grant execute on function public.supabash_test_register_verifier(text, text, text, text, text) to service_role;
+grant execute on function public.supabash_test_set_revision_time(uuid, uuid[], timestamptz) to service_role;
 
 notify pgrst, 'reload schema';

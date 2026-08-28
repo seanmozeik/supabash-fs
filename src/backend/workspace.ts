@@ -32,7 +32,12 @@ import {
 import { validateWorkspaceConfiguration } from '../core/workspace-options.js';
 import { commitFingerprint } from '../history/fingerprint.js';
 import type { WorkspaceLimits } from '../history/limits.js';
-import { assertCommitQuotas, diffPreviewLimit } from '../history/quota.js';
+import {
+  assertCommitQuotas,
+  diffPreviewLimit,
+  historyPageLimit,
+  normalizePurgeOptions,
+} from '../history/quota.js';
 import type {
   BackendDocument,
   BackendMutation,
@@ -179,11 +184,13 @@ class BackendWorkspace implements PostgresWorkspace {
   }
 
   history(query?: HistoryQuery): Promise<HistoryPage> {
-    return this.backend.history(query);
+    return Promise.resolve().then(() =>
+      this.backend.history({ ...query, limit: historyPageLimit(query?.limit, this.limits) }),
+    );
   }
 
   purge(options: PurgeOptions): Promise<PurgeReceipt> {
-    return this.backend.purge(options);
+    return Promise.resolve().then(() => this.backend.purge(normalizePurgeOptions(options)));
   }
 
   async readRevision(revision: string): Promise<ReadonlyWorkspaceView> {
@@ -285,14 +292,8 @@ const persistentPending = (fs: TrackedFileSystem): PendingChanges => {
   const moves = pending.moves.filter(
     ({ from, to }) => !isRuntimeOwnedPath(from) && !isRuntimeOwnedPath(to),
   );
-  const movedOut = pending.moves
-    .filter(({ from, to }) => !isRuntimeOwnedPath(from) && isRuntimeOwnedPath(to))
-    .flatMap(({ from }) => {
-      const entry = fs.baselineEntry(from);
-      return entry === undefined ? [] : [entry];
-    });
   return {
-    deletions: [...pending.deletions.filter(({ path }) => !isRuntimeOwnedPath(path)), ...movedOut],
+    deletions: pending.deletions.filter(({ path }) => !isRuntimeOwnedPath(path)),
     moves,
     upserts: pending.upserts.filter(
       (path) => !isRuntimeOwnedPath(path) && !derivedDirectory(fs, path),

@@ -156,11 +156,39 @@ as $function$
     );
 $function$;
 
+create function supabash.utf8_prefix(p_value text, p_max_bytes integer)
+returns text
+language plpgsql
+immutable
+strict
+parallel safe
+set search_path = pg_catalog
+as $function$
+declare
+  v_low integer := 0;
+  v_high integer := char_length(p_value);
+  v_middle integer;
+begin
+  if p_max_bytes < 0 then
+    raise exception using errcode = '22023', message = 'SUPABASH_INVALID_PREVIEW_LIMIT';
+  end if;
+  while v_low < v_high loop
+    v_middle := (v_low + v_high + 1) / 2;
+    if octet_length(left(p_value, v_middle)) <= p_max_bytes then
+      v_low := v_middle;
+    else
+      v_high := v_middle - 1;
+    end if;
+  end loop;
+  return left(p_value, v_low);
+end
+$function$;
+
 create table supabash.settings (
   singleton boolean primary key default true check (singleton),
-  default_max_revisions integer not null default 500 check (default_max_revisions >= 0),
+  default_max_revisions integer not null default 50 check (default_max_revisions >= 0),
   max_changes_per_commit integer check (max_changes_per_commit is null or max_changes_per_commit > 0),
-  max_diff_preview_bytes integer not null default 65536 check (max_diff_preview_bytes >= 0),
+  max_diff_preview_bytes integer not null default 8192 check (max_diff_preview_bytes >= 0),
   max_history_page_size integer not null default 1000 check (max_history_page_size > 0)
 );
 
@@ -1041,9 +1069,6 @@ begin
       );
     else
       v_from := v_change ->> 'from';
-      if v_before_hash is not null then
-        raise exception using errcode = '22023', message = 'SUPABASH_INVALID_PATH';
-      end if;
       select e.body_hash, e.byte_size into v_source_hash, v_source_size
       from supabash.revision_entries e
       where e.workspace_id = p_workspace_id and e.revision_id = v_revision and e.path = v_from;
@@ -1068,6 +1093,10 @@ begin
         v_hash := v_source_hash;
         v_size := v_source_size;
       end if;
+      delete from supabash.current_documents
+      where workspace_id = p_workspace_id and path = v_path;
+      delete from supabash.revision_entries
+      where workspace_id = p_workspace_id and revision_id = v_revision and path = v_path;
       update supabash.current_documents
       set path = v_path, body_hash = v_hash, byte_size = v_size
       where workspace_id = p_workspace_id and path = v_from;
@@ -1113,8 +1142,7 @@ as $function$
 declare
   v_limit integer;
   v_max integer;
-  v_cursor_time timestamptz;
-  v_cursor_revision uuid;
+  v_cursor_depth integer;
   v_records jsonb;
   v_count integer;
   v_next text;
@@ -1126,26 +1154,52 @@ begin
     raise exception using errcode = '54000', message = 'SUPABASH_QUOTA_HISTORY_PAGE';
   end if;
   if p_cursor is not null then
-    select committed_at, revision_id into v_cursor_time, v_cursor_revision
-    from supabash.workspace_revisions
-    where workspace_id = p_workspace_id and cursor = p_cursor;
+    with recursive causal as (
+      select r.revision_id, r.parent_revision, 0 as depth
+      from supabash.workspaces w
+      join supabash.workspace_revisions r
+        on r.workspace_id = w.id and r.revision_id = w.head_revision
+      where w.id = p_workspace_id
+      union all
+      select parent.revision_id, parent.parent_revision, child.depth + 1
+      from causal child
+      join supabash.workspace_revisions parent
+        on parent.workspace_id = p_workspace_id
+        and parent.revision_id = child.parent_revision
+    )
+    select causal.depth into v_cursor_depth
+    from causal
+    join supabash.workspace_revisions r
+      on r.workspace_id = p_workspace_id and r.revision_id = causal.revision_id
+    where r.cursor = p_cursor;
     if not found then
       raise exception using errcode = '22023', message = 'SUPABASH_REVISION_NOT_FOUND';
     end if;
   end if;
 
-  with page as (
-    select r.revision_id, r.committed_at
-    from supabash.workspace_revisions r
-    where r.workspace_id = p_workspace_id
-      and (p_cursor is null or (r.committed_at, r.revision_id) > (v_cursor_time, v_cursor_revision))
-    order by r.committed_at, r.revision_id
+  with recursive causal as (
+    select r.revision_id, r.parent_revision, 0 as depth
+    from supabash.workspaces w
+    join supabash.workspace_revisions r
+      on r.workspace_id = w.id and r.revision_id = w.head_revision
+    where w.id = p_workspace_id
+    union all
+    select parent.revision_id, parent.parent_revision, child.depth + 1
+    from causal child
+    join supabash.workspace_revisions parent
+      on parent.workspace_id = p_workspace_id
+      and parent.revision_id = child.parent_revision
+  ), page as (
+    select revision_id, depth
+    from causal
+    where p_cursor is null or depth < v_cursor_depth
+    order by depth desc
     limit v_limit + 1
   ), numbered as (
-    select *, row_number() over (order by committed_at, revision_id) as position from page
+    select *, row_number() over (order by depth desc) as position from page
   )
   select
-    coalesce(jsonb_agg(supabash.receipt(p_workspace_id, revision_id) order by committed_at, revision_id)
+    coalesce(jsonb_agg(supabash.receipt(p_workspace_id, revision_id) order by depth desc)
       filter (where position <= v_limit), '[]'::jsonb),
     count(*)::integer,
     max((supabash.receipt(p_workspace_id, revision_id) ->> 'cursor'))
@@ -1392,12 +1446,15 @@ declare
   v_from jsonb;
   v_to jsonb;
   v_entries jsonb;
-  v_preview integer := coalesce(p_preview_bytes, 0);
+  v_preview integer;
   v_max_preview integer;
   v_path text;
 begin
-  perform * from supabash.authorize_workspace(p_workspace_id, array['history'], p_delegated_grant);
+  perform * from supabash.authorize_workspace(
+    p_workspace_id, array['history', 'restore'], p_delegated_grant
+  );
   select max_diff_preview_bytes into v_max_preview from supabash.settings where singleton;
+  v_preview := coalesce(p_preview_bytes, v_max_preview);
   if v_preview < 0 or v_preview > v_max_preview then
     raise exception using errcode = '54000', message = 'SUPABASH_QUOTA_DIFF_PREVIEW';
   end if;
@@ -1496,8 +1553,8 @@ begin
     'afterHash', after_hash,
     'preview', case
       when v_preview = 0 or preview is null then null
-      when length(preview) <= v_preview then preview
-      else left(preview, v_preview) || chr(10) || '[truncated]' || chr(10)
+      when octet_length(preview) <= v_preview then preview
+      else supabash.utf8_prefix(preview, v_preview) || chr(10) || '[truncated]' || chr(10)
     end
   )) order by path), '[]'::jsonb)
   into v_entries
@@ -1539,20 +1596,33 @@ begin
   end if;
   perform pg_advisory_xact_lock(hashtextextended('supabash:' || p_workspace_id::text, 0));
 
-  with ranked as (
-    select r.revision_id, r.committed_at,
-      row_number() over (order by r.committed_at desc, r.revision_id desc) as position
-    from supabash.workspace_revisions r where r.workspace_id = p_workspace_id
+  with recursive causal as (
+    select r.revision_id, r.parent_revision, 0 as depth
+    from supabash.workspaces w
+    join supabash.workspace_revisions r
+      on r.workspace_id = w.id and r.revision_id = w.head_revision
+    where w.id = p_workspace_id
+    union all
+    select parent.revision_id, parent.parent_revision, child.depth + 1
+    from causal child
+    join supabash.workspace_revisions parent
+      on parent.workspace_id = p_workspace_id
+      and parent.revision_id = child.parent_revision
+  ), classified as (
+    select r.revision_id, r.committed_at, causal.depth
+    from supabash.workspace_revisions r
+    left join causal on causal.revision_id = r.revision_id
+    where r.workspace_id = p_workspace_id
   )
-  select coalesce(array_agg(revision_id order by committed_at, revision_id), '{}'::uuid[])
+  select coalesce(array_agg(revision_id order by depth desc nulls first, revision_id), '{}'::uuid[])
   into v_revisions
-  from ranked
-  where (position > v_max_revisions
+  from classified
+  where (depth is null or depth >= v_max_revisions
       or (p_max_age_ms is not null and committed_at < clock_timestamp() - make_interval(secs => p_max_age_ms / 1000.0)))
     and revision_id <> (select head_revision from supabash.workspaces where id = p_workspace_id)
     and not exists (
       select 1 from supabash.checkpoints c
-      where c.workspace_id = p_workspace_id and c.revision_id = ranked.revision_id
+      where c.workspace_id = p_workspace_id and c.revision_id = classified.revision_id
     );
 
   select

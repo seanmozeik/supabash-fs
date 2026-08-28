@@ -18,6 +18,8 @@ export const proveCore = async (context: LiveContext, user: TestUser): Promise<C
   const fixtures = new Map<string, string>([
     ['/docs/delete.md', 'delete me\n'],
     ['/docs/move.md', 'move me\n'],
+    ['/docs/overwrite-source.md', 'replacement\n'],
+    ['/docs/overwrite-target.md', 'old destination\n'],
     ['/docs/update.md', 'alpha edge-runtime-marker\n'],
     ['/empty.md', ''],
     ['/nested/space name.md', 'tabs\tand trailing spaces  \n'],
@@ -91,6 +93,7 @@ const proveTools = async (
   await bash(tools, "sed -i 's/Draft/Edited/' /scratch.md");
   await bash(tools, 'mkdir -p /archive');
   await bash(tools, 'mv /docs/move.md /archive/moved.md');
+  await bash(tools, 'mv /docs/overwrite-source.md /docs/overwrite-target.md');
   await bash(tools, 'rm /docs/delete.md');
   await bash(tools, String.raw`printf 'runtime-owned\n' > /tmp/ignored.md`);
   const patch = await invokeTool(tools['apply_patch'], {
@@ -126,6 +129,11 @@ const proveTools = async (
   assert(
     (await reopened.fs.readFile('/archive/moved.md')) === 'move me\n',
     'Move did not persist.',
+  );
+  assert(
+    (await reopened.fs.readFile('/docs/overwrite-target.md')) === 'replacement\n' &&
+      !(await reopened.fs.exists('/docs/overwrite-source.md')),
+    'Existing-destination move did not persist atomically.',
   );
   assert(!(await reopened.fs.exists('/docs/delete.md')), 'Delete did not persist.');
   assert(

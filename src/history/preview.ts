@@ -19,7 +19,24 @@ export const revisionDiffPreview = async (
   if (rendered === undefined) {
     return undefined;
   }
-  return rendered.length <= limit ? rendered : `${rendered.slice(0, limit)}\n[truncated]\n`;
+  const encoded = new TextEncoder().encode(rendered);
+  if (encoded.byteLength <= limit) {
+    return rendered;
+  }
+  return `${utf8Prefix(encoded, limit)}\n[truncated]\n`;
+};
+
+const utf8Prefix = (encoded: Uint8Array, limit: number): string => {
+  const prefixDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+  let end = Math.min(limit, encoded.byteLength);
+  while (end > 0) {
+    try {
+      return prefixDecoder.decode(encoded.subarray(0, end));
+    } catch {
+      end -= 1;
+    }
+  }
+  return '';
 };
 
 const textOf = async (

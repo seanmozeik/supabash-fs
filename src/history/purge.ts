@@ -1,26 +1,22 @@
-import { SupabashError } from '../api/errors.js';
 import type { PurgeOptions, PurgeReceipt } from '../api/history.js';
 import type { HistoryBlobStore } from './blob-store.js';
 import { readJson } from './json-io.js';
 import { HISTORY_ROOT, historyKey } from './keys.js';
-import { DEFAULT_MAX_REVISIONS_RETAINED } from './limits.js';
 import { parseCheckpoint, parseComplete, parseHead, parseIntent, parseRevision } from './parse.js';
+import { normalizePurgeOptions } from './quota.js';
 import type { HeadRecord, RevisionRecord } from './records.js';
 
 export const purgeHistory = async (
   history: HistoryBlobStore,
   options: PurgeOptions,
 ): Promise<PurgeReceipt> => {
-  const maxRevisions = options.maxRevisions ?? DEFAULT_MAX_REVISIONS_RETAINED;
-  assertPurgeLimit(maxRevisions, 'maxRevisions');
-  if (options.maxAgeMs !== undefined) {
-    assertPurgeLimit(options.maxAgeMs, 'maxAgeMs');
-  }
+  const normalized = normalizePurgeOptions(options);
+  const { maxRevisions } = normalized;
   const head = await readJson(history, historyKey.head, parseHead);
   const records = await loadRevisions(history);
   const pinned = await pinnedRevisions(history, head);
   const keptByCount = keepRecent(records, head, maxRevisions);
-  const cutoff = options.maxAgeMs === undefined ? undefined : Date.now() - options.maxAgeMs;
+  const cutoff = normalized.maxAgeMs === undefined ? undefined : Date.now() - normalized.maxAgeMs;
   const removable = records.filter((record) => {
     if (pinned.has(record.revision)) {
       return false;
@@ -57,10 +53,10 @@ export const purgeHistory = async (
   const aborted = await removableAbortedTransactions(history, cutoff);
   const objects = [...new Set([...unusedObjects, ...transactionKeys, ...aborted])].toSorted();
   const bytes = await byteSize(history, objects);
-  if (options.dryRun !== true && objects.length > 0) {
+  if (normalized.dryRun !== true && objects.length > 0) {
     await history.remove(objects);
   }
-  return { bytes, dryRun: options.dryRun === true, objects };
+  return { bytes, dryRun: normalized.dryRun === true, objects };
 };
 
 const removableAbortedTransactions = async (
@@ -153,10 +149,4 @@ const byteSize = async (history: HistoryBlobStore, keys: readonly string[]): Pro
     total += body?.byteLength ?? 0;
   }
   return total;
-};
-
-const assertPurgeLimit = (value: number, name: string): void => {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new SupabashError('QUOTA_EXCEEDED', `${name} must be a non-negative safe integer.`);
-  }
 };
