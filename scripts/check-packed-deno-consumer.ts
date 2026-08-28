@@ -62,12 +62,15 @@ try {
     ),
     Bun.write(
       path.join(consumerDirectory, 'smoke.ts'),
-      `import { Supabash, SupabashError } from '@seanmozeik/supabash-fs';
+      `import { POSTGRES_INSTALL_SQL_URL, Supabash, SupabashError } from '@seanmozeik/supabash-fs';
 import { createTools, type WorkspaceTools } from '@seanmozeik/supabash-fs/ai-sdk';
 import { InMemoryFs } from 'just-bash/browser';
 if (!Object.hasOwn(Supabash, 'open')) throw new Error('Missing Supabash.open.');
+if (!Object.hasOwn(Supabash, 'openPostgres')) throw new Error('Missing Supabash.openPostgres.');
 if (typeof createTools !== 'function') throw new Error('Missing createTools.');
 if (new SupabashError('STORAGE', 'test').code !== 'STORAGE') throw new Error('Bad error.');
+const installSql = await Deno.readTextFile(POSTGRES_INSTALL_SQL_URL);
+if (!installSql.includes('create schema supabash')) throw new Error('Missing Postgres install SQL.');
 const result: Promise<WorkspaceTools> | undefined = undefined;
 const workspace = { fs: new InMemoryFs() } as unknown as import('@seanmozeik/supabash-fs').Workspace;
 const bound = await createTools({ viewImage: { enabled: true }, workspace });

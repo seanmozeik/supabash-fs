@@ -1,7 +1,7 @@
 {
   "name": "@seanmozeik/supabash-fs",
-  "version": "0.2.0",
-  "description": "Authenticated Supabase Storage workspace filesystem for Just Bash, Apply Patch, and durable revisions.",
+  "version": "0.3.0",
+  "description": "Authenticated Supabase Storage and Postgres workspace filesystems for Just Bash, Apply Patch, and durable revisions.",
   "keywords": [
     "apply-patch",
     "deno",
@@ -17,6 +17,7 @@
   "files": [
     "dist",
     "examples",
+    "sql",
     "LICENSE",
     "README.md",
     "CHANGELOG.md",
@@ -36,6 +37,8 @@
       "types": "./dist/ai-sdk/index.d.ts",
       "import": "./dist/ai-sdk.js"
     },
+    "./postgres/install.sql": "./sql/postgres/0001_install.sql",
+    "./postgres/remove.sql": "./sql/postgres/0001_remove.sql",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -50,7 +53,7 @@
     "build:js:root": "bun build ./src/index.ts --outfile ./dist/index.js --target browser --format esm --packages external",
     "build:smoke": "bun ./scripts/check-built-package.mjs && bun ./scripts/check-built-ai-sdk.mjs",
     "build:types": "tsc -p tsconfig.build.json",
-    "check:deno": "deno check --minimum-dependency-age=0 --sloppy-imports --config deno.check.json tests/deno/live-supabase.ts tests/deno/ai-sdk.ts",
+    "check:deno": "deno check --minimum-dependency-age=0 --sloppy-imports --config deno.check.json tests/deno/live-supabase.ts tests/deno/ai-sdk.ts tests/deno/postgres-live.ts tests/postgres/edge-smoke/index.ts",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run source:size",
     "fix": "oxfmt --write . && oxlint --type-aware --type-check --deny-warnings --fix .",
     "format": "oxfmt --write .",
@@ -61,6 +64,7 @@
     "prepack": "bun run build && bun run build:smoke",
     "source:size": "bun ./scripts/check-source-size.ts",
     "test": "vitest run --reporter=minimal",
+    "test:postgres:live": "bash ./scripts/run-postgres-integration.sh",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -68,7 +72,7 @@
   },
   "devDependencies": {
     "@ai-sdk/openai": "4.0.50",
-    "@seanmozeik/de-clank": "0.1.7",
+    "@seanmozeik/de-clank": "0.1.8",
     "@types/bun": "1.4.0",
     "@types/node": "26.2.0",
     "ai": "7.0.83",

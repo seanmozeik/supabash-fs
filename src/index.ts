@@ -135,6 +135,11 @@ export const DEFAULT_MAX_TRANSACTION_METADATA_BYTES = defaultMaxTransactionMetad
 export const DEFAULT_MAX_VISIBLE_FILES = defaultMaxVisibleFiles;
 export const HISTORY_SCHEMA_VERSION = historySchemaVersion;
 export const POSTGRES_WORKSPACE_CAPABILITIES = postgresWorkspaceCapabilities;
+export const POSTGRES_INSTALL_SQL_URL = new URL(
+  '../sql/postgres/0001_install.sql',
+  import.meta.url,
+);
+export const POSTGRES_REMOVE_SQL_URL = new URL('../sql/postgres/0001_remove.sql', import.meta.url);
 export const Supabash = openWorkspace;
 export const SupabashError = WorkspaceError;
 export const applyDiff = applyV4ADiff;

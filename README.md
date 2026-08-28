@@ -1,14 +1,14 @@
 # supabash-fs
 
-`@seanmozeik/supabash-fs` mounts one verified Storage prefix as a lazy, writable
-filesystem for [Just Bash](https://github.com/vercel-labs/just-bash). Agents
-edit a staged in-memory tree. The host commits, inspects history, and restores.
-No tool call publishes durable state by itself.
+`@seanmozeik/supabash-fs` mounts one verified Supabase workspace as a writable
+filesystem for [Just Bash](https://github.com/vercel-labs/just-bash). A workspace
+can use Supabase Storage or the package-owned Postgres schema. Agents edit a
+staged in-memory tree. The host commits, inspects history, and restores. No tool
+call publishes durable state by itself.
 
-The package uses Supabase Storage as the durable file authority. It loads object
-metadata when a workspace opens, downloads a file body on first read, stages
-changes in memory, and writes changed objects plus an immutable revision when
-the host commits.
+The Storage backend remains byte-oriented and lazy. The Postgres backend is an
+explicit UTF-8 text tree with an atomic commit transaction and a snapshot pinned
+to one immutable revision.
 
 The public API can still change before version 1.0.
 
@@ -16,21 +16,23 @@ The public API can still change before version 1.0.
 
 One opened `Workspace` is the unit of work:
 
-1. `Supabash.open` verifies a user bearer token and derives the object prefix
+1. `Supabash.open` verifies a user bearer token and derives the Storage prefix
    from that user ID. Callers cannot supply a user ID, root, or prefix.
-2. `Supabash.openDelegated` is a separate trusted-host path. It verifies a
-   short-lived Ed25519 capability and mounts only the signed prefix.
-3. `workspace.fs` is a Just Bash `IFileSystem`. Bash, Apply Patch, and optional
+2. `Supabash.openPostgres` verifies the same bearer token and opens one canonical
+   workspace identifier. Database RLS checks that the verified subject owns it.
+3. `Supabash.openDelegated` and `Supabash.openPostgresDelegated` are separate
+   trusted-host paths. They verify a short-lived Ed25519 capability and mount
+   only its signed Storage prefix or Postgres workspace.
+4. `workspace.fs` is a Just Bash `IFileSystem`. Bash, Apply Patch, and optional
    image inspection all use this same staged tree.
-4. `commit` publishes staged edits, writes content-addressed history under
-   `.supabash/`, and returns an immutable transaction receipt.
-5. `checkpoint`, `checkpoints`, `deleteCheckpoint`, `history`, `diff`,
+5. `commit` publishes staged edits and returns an immutable transaction receipt.
+6. `checkpoint`, `checkpoints`, `deleteCheckpoint`, `history`, `diff`,
    `readRevision`, `restore`, and `purge` are host APIs. They are not model
    tools.
 
 Authorization is not command-string filtering. The real boundaries are the
 virtual filesystem, canonical path checks, the verified user or capability,
-the fixed bucket, and Storage RLS. The command policy is a damage limiter.
+and the backend authorization policy. The command policy is a damage limiter.
 
 The root export does not load `ai`, `@ai-sdk/openai`, or `bash-tool`. AI SDK
 tools live on `@seanmozeik/supabash-fs/ai-sdk`.
@@ -62,7 +64,7 @@ installed npm files, environment access for `OPENAI_API_KEY` and
 `OPENAI_BASE_URL`, and system-information access. The package's clean-consumer
 gate type-checks and runs both exports from the packed tarball under Deno 2.
 
-## Configure Supabase
+## Configure Supabase Storage
 
 Create a private Storage bucket. The examples in this document use `workspaces`.
 
@@ -136,6 +138,63 @@ Node.js or an operating-system filesystem.
 The API does not accept a user ID or an object prefix. Extra caller properties
 cannot select a different root. Every Storage call uses the user's bearer
 token, so the configured RLS policies also check each operation.
+
+## Configure Supabase Postgres
+
+Run the versioned install asset as the Supabase database owner:
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f node_modules/@seanmozeik/supabash-fs/sql/postgres/0001_install.sql
+```
+
+The package exports the same file as
+`@seanmozeik/supabash-fs/postgres/install.sql`. The matching removal asset is
+`@seanmozeik/supabash-fs/postgres/remove.sql`. For runtime file access, import
+`POSTGRES_INSTALL_SQL_URL` or `POSTGRES_REMOVE_SQL_URL` from the package root
+and pass the URL to the Bun, Deno, or Node file API.
+
+The install creates the private `supabash` schema, the non-login
+`supabash_api` execution role, FORCE RLS policies, and public RPCs. Authenticated
+and service-role clients receive no direct table access. Normal RPC calls derive
+ownership from the verified JWT subject.
+
+Create a workspace once, then store its returned canonical identifier:
+
+```ts
+const workspace = await Supabash.createPostgresWorkspace({ publishableKey, request, supabaseUrl });
+```
+
+Open it through the Postgres backend:
+
+```ts
+const mounted = await Supabash.openPostgres({ publishableKey, request, supabaseUrl, workspace });
+```
+
+The API accepts no owner, root, prefix, or secondary slug. The caller supplies
+only the canonical workspace identifier. RLS decides whether the verified
+subject can use it.
+
+The Postgres backend persists regular UTF-8 files. It derives directories from
+paths. It rejects invalid UTF-8, NUL text, symbolic links, mode changes, and
+durable empty directories with `UNSUPPORTED_CONTENT`. Its public capabilities
+state these limits:
+
+```ts
+mounted.capabilities;
+// {
+//   backend: 'postgres',
+//   content: 'utf8-text-tree',
+//   durableEmptyDirectories: false,
+//   modes: false,
+//   symbolicLinks: false,
+// }
+```
+
+Just Bash still supports reads, recursive `grep` and `find`, redirection,
+append, `sed -i`, nested file paths, moves, and deletes. `/bin`, `/usr`, `/dev`,
+`/proc`, and `/tmp` belong to the shell adapter. They never enter a snapshot or
+commit.
 
 ## Writable Bash and Apply Patch
 
@@ -366,6 +425,51 @@ interface CommitCoordinator {
 The package does not require Postgres. A caller can implement the coordinator
 with a database lock, queue, Durable Object, or another system.
 
+## Postgres consistency
+
+The Postgres backend loads the current head and its complete immutable manifest
+through one pinned snapshot RPC. Its commit RPC takes a transaction-scoped
+advisory lock, checks the expected head, validates the complete change set, and
+writes current documents, workspace-local content-addressed bodies, revision
+metadata, the complete revision manifest, receipt changes, and the new head in
+one transaction.
+
+A stale head returns HTTP 409 with `SUPABASH_COMMIT_CONFLICT`, which the client
+maps to `COMMIT_CONFLICT`. Expected conflicts do not use retry-class SQLSTATE
+`40001`. Any other error rolls back the full transaction. Restore stages a
+target revision and the next commit creates a new forward revision.
+
+Version 0.3.0 writes a complete manifest for every revision. This makes pinned
+loads and historical reads direct, but each commit writes one manifest row per
+document. The internal backend contract can support periodic manifests and
+deltas in a later release without changing `Workspace`.
+
+## Operation events
+
+Postgres options accept an optional synchronous observer. It has no network
+destination and sends nothing unless the host supplies a callback:
+
+```ts
+const workspace = await Supabash.openPostgres({
+  observability: {
+    onOperation(event) {
+      operationEvents.push(event);
+    },
+  },
+  publishableKey,
+  request,
+  supabaseUrl,
+  workspace: workspaceId,
+});
+```
+
+Events can include backend kind, operation, duration, outcome, typed error code,
+document count, UTF-8 byte count, measured serialized payload bytes, change
+count, and replay or conflict outcome. They do not include document bodies,
+paths, tokens, user IDs, workspace IDs, correlation IDs, metadata, or raw error
+objects. Observer failures do not change workspace behavior. A host can record
+these events to compare snapshot, projection, and commit latency later.
+
 ## Indexing feed
 
 Commit receipts and history records expose a stable cursor for later text,
@@ -457,6 +561,44 @@ signed prefix. That is a host trust boundary: anyone who can call
 `openDelegated` with a valid capability and the service-role key can read and
 write that prefix.
 
+Postgres delegation uses schema version 2. The signed claims replace `bucket`
+and `prefix` with `backend: 'postgres'` and one canonical `workspace` UUID:
+
+```ts
+const capability = await createDelegatedCapability({
+  claims: {
+    aud: 'supabash-jobs',
+    backend: 'postgres',
+    corr: 'job-2',
+    exp: Math.floor(Date.now() / 1000) + 300,
+    iat: Math.floor(Date.now() / 1000),
+    iss: 'https://example.invalid/issuer',
+    nonce: 'job-2',
+    ops: ['read', 'write', 'commit', 'history'],
+    origin: supabaseUrl,
+    sub: 'job-2',
+    sv: POSTGRES_CAPABILITY_SCHEMA_VERSION,
+    workspace: workspaceId,
+  },
+  keyId: 'k1',
+  privateKey,
+});
+
+const workspace = await Supabash.openPostgresDelegated({
+  capability,
+  serviceRoleKey,
+  supabaseUrl,
+  verifier,
+});
+```
+
+Register each allowed Ed25519 public key in
+`supabash.capability_verifiers` as the database owner. The SQL verifies the
+JWS, consumes its nonce, and returns an opaque short-lived grant bound to the
+signed workspace and operations. Service-role RPC calls cannot select a
+workspace without this grant. See the package-owned Postgres SQL README for
+the key registration statement.
+
 Threat model, in short:
 
 - Changing the subject or prefix in a copied token fails signature checks.
@@ -481,6 +623,17 @@ interface SupabashOptions {
   readonly request: Request;
   readonly supabaseUrl: string;
   readonly uploadConcurrency?: number;
+}
+
+interface PostgresWorkspaceOptions {
+  readonly workspace: string;
+  readonly fetch?: typeof globalThis.fetch;
+  readonly limits?: WorkspaceLimits;
+  readonly maxFileSystemBytes?: number;
+  readonly observability?: WorkspaceObservability;
+  readonly publishableKey: string;
+  readonly request: Request;
+  readonly supabaseUrl: string;
 }
 ```
 
@@ -565,12 +718,19 @@ bun install --frozen-lockfile
 ```sh
 just verify
 just live
+just live-postgres
 ```
 
 `just live` expects a local Supabase API at `SUPABASH_TEST_SUPABASE_URL` plus a
 publishable key, service-role key, and two user tokens or emails. It creates
 the `workspaces` bucket when needed and runs the Deno suite. Point those
 variables at a Docker stack, not a hosted project.
+
+`just live-postgres` installs the package SQL in a disposable Docker-backed
+Supabase database, runs the authenticated and delegated Deno integration
+suite, removes all package-owned database objects and synthetic users, and
+checks that cleanup succeeded. Its required environment variables are listed
+by `scripts/run-postgres-integration.sh` when one is missing.
 
 The gate checks formatting, lint, TypeScript, source size, tests, the browser
 build, Deno type resolution, production dependencies, package contents, clean

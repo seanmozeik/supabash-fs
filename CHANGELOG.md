@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0
+
+- Add an explicit Postgres workspace backend behind the existing `Workspace`
+  contract while preserving the Supabase Storage backend and import paths.
+- Ship versioned install and removal SQL with FORCE RLS, execute-only RPC
+  access, a non-login execution role, pinned snapshots, atomic compare-and-swap
+  commits, complete immutable revision manifests, checkpoints, and retention.
+- Define the Postgres backend as a UTF-8 text tree. Reject binary data, NUL,
+  symbolic links, mode changes, and durable empty directories with typed errors.
+- Keep Just Bash runtime paths out of user snapshots and mutations.
+- Add database-verified delegated capability exchange for Postgres workspaces.
+- Add optional privacy-safe operation events for snapshot, projection, commit,
+  history, diff, checkpoint, revision, and purge work.
+- Export the Postgres SQL assets and prove the packed package from Bun and Deno.
+- Update `@seanmozeik/de-clank` to 0.1.8 and repair the stricter findings.
+
 ## 0.2.0
 
 Agent workspace APIs on top of the authenticated Storage filesystem.

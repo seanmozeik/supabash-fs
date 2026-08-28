@@ -5,7 +5,7 @@ import packageJson from '../package.json';
 describe('package metadata', () => {
   test('is configured for public distribution', () => {
     expect(packageJson.name).toBe('@seanmozeik/supabash-fs');
-    expect(packageJson.version).toBe('0.2.0');
+    expect(packageJson.version).toBe('0.3.0');
     expect(packageJson.publishConfig.access).toBe('public');
     expect('private' in packageJson).toBe(false);
   });
@@ -33,5 +33,11 @@ describe('package metadata', () => {
       ai: { optional: true },
       'bash-tool': { optional: true },
     });
+  });
+
+  test('exports versioned Postgres installation and removal assets', () => {
+    expect(packageJson.exports['./postgres/install.sql']).toBe('./sql/postgres/0001_install.sql');
+    expect(packageJson.exports['./postgres/remove.sql']).toBe('./sql/postgres/0001_remove.sql');
+    expect(packageJson.files).toContain('sql');
   });
 });

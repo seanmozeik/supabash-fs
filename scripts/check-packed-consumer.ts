@@ -56,9 +56,13 @@ try {
     ),
     Bun.write(
       path.join(consumerDirectory, 'smoke.mjs'),
-      `import { Supabash, SupabashError } from '@seanmozeik/supabash-fs';
+      `import { readFile } from 'node:fs/promises';
+import { POSTGRES_INSTALL_SQL_URL, Supabash, SupabashError } from '@seanmozeik/supabash-fs';
 if (!Object.hasOwn(Supabash, 'open')) throw new Error('Missing Supabash.open.');
+if (!Object.hasOwn(Supabash, 'openPostgres')) throw new Error('Missing Supabash.openPostgres.');
 if (new SupabashError('STORAGE', 'test').code !== 'STORAGE') throw new Error('Bad error.');
+const installSql = await readFile(POSTGRES_INSTALL_SQL_URL, 'utf8');
+if (!installSql.includes('create schema supabash')) throw new Error('Missing Postgres install SQL.');
 `,
     ),
     Bun.write(
@@ -77,11 +81,14 @@ if (new SupabashError('STORAGE', 'test').code !== 'STORAGE') throw new Error('Ba
     ),
     Bun.write(
       path.join(consumerDirectory, 'typecheck.ts'),
-      `import { Supabash, SupabashError, type SupabashOptions, type Workspace } from '@seanmozeik/supabash-fs';
+      `import { Supabash, SupabashError, type PostgresWorkspace, type PostgresWorkspaceOptions, type SupabashOptions, type Workspace } from '@seanmozeik/supabash-fs';
 declare const options: SupabashOptions;
+declare const postgresOptions: PostgresWorkspaceOptions;
 const workspace: Promise<Workspace> = Supabash.open(options);
+const postgresWorkspace: Promise<PostgresWorkspace> = Supabash.openPostgres(postgresOptions);
 const error = new SupabashError('STORAGE', 'test');
 void workspace;
+void postgresWorkspace;
 void error;
 `,
     ),

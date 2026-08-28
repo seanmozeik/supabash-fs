@@ -60,3 +60,8 @@ verify: check deno-toolchain
 [doc('Run the live Supabase Deno suite')]
 live: build deno-toolchain
   bun ./scripts/run-live-supabase.ts
+
+[group('test')]
+[doc('Run the live Postgres and Edge Runtime suite')]
+live-postgres: build deno-toolchain
+  bun run test:postgres:live

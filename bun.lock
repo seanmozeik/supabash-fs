@@ -9,7 +9,7 @@
       },
       "devDependencies": {
         "@ai-sdk/openai": "4.0.50",
-        "@seanmozeik/de-clank": "0.1.7",
+        "@seanmozeik/de-clank": "0.1.8",
         "@types/bun": "1.4.0",
         "@types/node": "26.2.0",
         "ai": "7.0.83",
@@ -22,8 +22,16 @@
         "vitest": "4.1.11",
       },
       "peerDependencies": {
+        "@ai-sdk/openai": ">=4 <5",
+        "ai": ">=7 <8",
+        "bash-tool": ">=1.3.19 <2",
         "just-bash": ">=3.4.2 <4",
       },
+      "optionalPeers": [
+        "@ai-sdk/openai",
+        "ai",
+        "bash-tool",
+      ],
     },
   },
   "packages": {
@@ -223,7 +231,7 @@
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
 
-    "@seanmozeik/de-clank": ["@seanmozeik/de-clank@0.1.7", "", { "dependencies": { "@oxlint/plugins": "1.79.0", "oxc-parser": "0.146.0", "oxlint-plugin-react-doctor": "0.9.12" }, "peerDependencies": { "oxfmt": ">=0.64.0", "oxlint": ">=1.79.0", "oxlint-tsgolint": ">=7.0.2001" }, "optionalPeers": ["oxfmt"] }, "sha512-sGjRkhOKqT1YmjCfNrSwtiLdBVx7PEKZ474wYWqyqA543Z6iH1rzG67gjwh+gQ2W9cPgPcVi6g0skfAcXXezkw=="],
+    "@seanmozeik/de-clank": ["@seanmozeik/de-clank@0.1.8", "", { "dependencies": { "@oxlint/plugins": "1.79.0", "oxc-parser": "0.146.0", "oxlint-plugin-react-doctor": "0.9.12" }, "peerDependencies": { "oxfmt": ">=0.64.0", "oxlint": ">=1.79.0", "oxlint-tsgolint": ">=7.0.2001" }, "optionalPeers": ["oxfmt"] }, "sha512-4pS5ETWX5E5whVW23r7u7y+slOWS8GHADvAHDfv20f2VeUslJvd8kIE2dynJ8Xvbll5So3DEH1j+iPRtRJrpqw=="],
 
     "@shaderfrog/glsl-parser": ["@shaderfrog/glsl-parser@7.0.1", "", {}, "sha512-8mpfsoPeRhesY3pOrzNZBL8uG6N5GVX1EHLBYbd4gzKs+c7vaEIqpTNK5VrffU33qQN4cwpP2v3u4aPPBU32sw=="],
 
