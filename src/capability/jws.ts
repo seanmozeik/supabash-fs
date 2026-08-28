@@ -1,4 +1,4 @@
-import type { DelegatedCapabilityClaims } from '../api/capability.js';
+import type { AnyDelegatedCapabilityClaims } from '../api/capability.js';
 import { asUnknownRecord } from '../api/json.js';
 
 const text = new TextEncoder();
@@ -6,7 +6,7 @@ const json = new TextDecoder();
 
 export const compactJws = async (
   header: Readonly<Record<string, string>>,
-  payload: DelegatedCapabilityClaims,
+  payload: AnyDelegatedCapabilityClaims,
   privateKey: CryptoKey,
 ): Promise<string> => {
   const signingInput = `${b64urlJson(header)}.${b64urlJson(payload)}`;

@@ -1,6 +1,7 @@
 import {
   CAPABILITY_SCHEMA_VERSION,
-  type DelegatedCapabilityClaims,
+  POSTGRES_CAPABILITY_SCHEMA_VERSION,
+  type AnyDelegatedCapabilityClaims,
   type DelegatedOperation,
 } from '../api/capability.js';
 import { SupabashError } from '../api/errors.js';
@@ -9,9 +10,29 @@ import { asUnknownRecord } from '../api/json.js';
 const SAFE_BUCKET = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/u;
 const SAFE_PREFIX = /^[A-Za-z0-9_-]{1,128}(?:\/[A-Za-z0-9_-]{1,128})*$/u;
 
-export const parseClaims = (value: unknown): DelegatedCapabilityClaims => {
+export const parseClaims = (value: unknown): AnyDelegatedCapabilityClaims => {
   const record = asObject(value);
   const ops = parseOps(record['ops']);
+  if (record['backend'] === 'postgres') {
+    const schemaVersion = requiredNumber(record, 'sv');
+    if (schemaVersion !== POSTGRES_CAPABILITY_SCHEMA_VERSION) {
+      throw invalid('Capability schema version is not supported.');
+    }
+    return {
+      aud: requiredString(record, 'aud'),
+      backend: 'postgres',
+      corr: requiredString(record, 'corr'),
+      exp: requiredNumber(record, 'exp'),
+      iat: requiredNumber(record, 'iat'),
+      iss: requiredString(record, 'iss'),
+      nonce: requiredString(record, 'nonce'),
+      ops,
+      origin: requiredString(record, 'origin'),
+      sub: requiredString(record, 'sub'),
+      sv: schemaVersion,
+      workspace: requiredString(record, 'workspace'),
+    };
+  }
   return {
     aud: requiredString(record, 'aud'),
     bucket: requiredString(record, 'bucket'),
@@ -28,7 +49,13 @@ export const parseClaims = (value: unknown): DelegatedCapabilityClaims => {
   };
 };
 
-export const assertClaimSchema = (claims: DelegatedCapabilityClaims): void => {
+export const assertClaimSchema = (claims: AnyDelegatedCapabilityClaims): void => {
+  if ('backend' in claims) {
+    if (!SAFE_WORKSPACE.test(claims.workspace)) {
+      throw invalid('Capability workspace is not a safe identifier.');
+    }
+    return;
+  }
   if (!SAFE_BUCKET.test(claims.bucket)) {
     throw invalid('Capability bucket is not a safe storage identifier.');
   }
@@ -39,6 +66,9 @@ export const assertClaimSchema = (claims: DelegatedCapabilityClaims): void => {
     throw invalid('Capability schema version is not supported.');
   }
 };
+
+const SAFE_WORKSPACE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 const parseOps = (value: unknown): readonly DelegatedOperation[] => {
   if (!Array.isArray(value) || value.length === 0) {

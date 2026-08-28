@@ -1,6 +1,7 @@
 import { openDelegated } from '../capability/open.js';
 import { sha256 } from '../core/hash.js';
 import { createStorageWorkspace } from '../core/workspace.js';
+import { createPostgresWorkspace, openPostgres, openPostgresDelegated } from '../postgres/open.js';
 import { authenticate } from '../supabase/auth.js';
 import { createSupabaseStorage } from '../supabase/storage.js';
 import type { Workspace } from './contracts.js';
@@ -25,4 +26,10 @@ const open = async (options: SupabashOptions): Promise<Workspace> => {
   });
 };
 
-export const Supabash = Object.freeze({ open, openDelegated });
+export const Supabash = Object.freeze({
+  createPostgresWorkspace,
+  open,
+  openDelegated,
+  openPostgres,
+  openPostgresDelegated,
+});

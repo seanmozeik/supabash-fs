@@ -1,7 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 import { SupabashError } from '../api/errors.js';
-import type { SupabashOptions } from '../api/options.js';
 import { jwtRole } from './jwt.js';
 
 export interface AuthenticatedClient {
@@ -9,7 +8,16 @@ export interface AuthenticatedClient {
   readonly userId: string;
 }
 
-export const authenticate = async (options: SupabashOptions): Promise<AuthenticatedClient> => {
+export interface SupabaseAuthenticationOptions {
+  readonly fetch?: typeof globalThis.fetch;
+  readonly publishableKey: string;
+  readonly request: Request;
+  readonly supabaseUrl: string;
+}
+
+export const authenticate = async (
+  options: SupabaseAuthenticationOptions,
+): Promise<AuthenticatedClient> => {
   assertPublishableKey(options.publishableKey);
   const accessToken = bearerTokenFrom(options.request);
   if (accessToken.startsWith('sb_secret_') || jwtRole(accessToken) === 'service_role') {

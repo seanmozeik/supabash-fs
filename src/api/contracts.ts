@@ -19,6 +19,16 @@ import type { JsonValue } from './json.js';
 export type WorkspaceChangeKind = 'delete' | 'move' | 'upsert';
 export type WorkspaceEntryKind = 'directory' | 'file' | 'symlink';
 
+export type WorkspaceBackendKind = 'postgres' | 'storage';
+
+export interface WorkspaceCapabilities {
+  readonly backend: WorkspaceBackendKind;
+  readonly content: 'byte-tree' | 'utf8-text-tree';
+  readonly durableEmptyDirectories: boolean;
+  readonly modes: boolean;
+  readonly symbolicLinks: boolean;
+}
+
 export interface WorkspaceChange {
   readonly afterEtag?: string;
   readonly afterHash?: string;

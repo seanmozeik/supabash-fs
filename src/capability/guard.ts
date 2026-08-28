@@ -24,6 +24,14 @@ export const guardWorkspace = (
   correlationId: string,
 ): Workspace => new GuardedWorkspace(workspace, operations, actor, correlationId);
 
+export const guardWorkspaceWithCapabilities = <Capabilities>(
+  workspace: Workspace & { readonly capabilities: Capabilities },
+  operations: ReadonlySet<DelegatedOperation>,
+  actor: string,
+  correlationId: string,
+): Workspace & { readonly capabilities: Capabilities } =>
+  new CapabilityGuardedWorkspace(workspace, operations, actor, correlationId);
+
 class GuardedWorkspace implements Workspace {
   readonly fs: Workspace['fs'];
   private readonly actor: string;
@@ -112,6 +120,20 @@ class GuardedWorkspace implements Workspace {
         'Delegated capability does not allow this workspace operation.',
       );
     }
+  }
+}
+
+class CapabilityGuardedWorkspace<Capabilities> extends GuardedWorkspace implements Workspace {
+  readonly capabilities: Capabilities;
+
+  constructor(
+    inner: Workspace & { readonly capabilities: Capabilities },
+    operations: ReadonlySet<DelegatedOperation>,
+    actor: string,
+    correlationId: string,
+  ) {
+    super(inner, operations, actor, correlationId);
+    this.capabilities = inner.capabilities;
   }
 }
 

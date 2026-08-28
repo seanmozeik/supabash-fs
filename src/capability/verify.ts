@@ -1,7 +1,9 @@
 import {
   DEFAULT_CLOCK_SKEW_SECONDS,
   DEFAULT_MAX_CAPABILITY_LIFETIME_SECONDS,
+  type AnyDelegatedCapabilityClaims,
   type DelegatedCapabilityClaims,
+  type PostgresDelegatedCapabilityClaims,
   type VerifyDelegatedCapabilityInput,
 } from '../api/capability.js';
 import { SupabashError } from '../api/errors.js';
@@ -12,13 +14,27 @@ export const verifyDelegatedCapability = async (
   input: VerifyDelegatedCapabilityInput,
 ): Promise<DelegatedCapabilityClaims> => {
   const claims = await verifyDelegatedCapabilityClaims(input);
+  if ('backend' in claims) {
+    throw new SupabashError('INVALID_CAPABILITY', 'Capability backend is not storage.');
+  }
+  await consumeDelegatedCapabilityNonce(claims, input.verifier);
+  return claims;
+};
+
+export const verifyPostgresDelegatedCapability = async (
+  input: VerifyDelegatedCapabilityInput,
+): Promise<PostgresDelegatedCapabilityClaims> => {
+  const claims = await verifyDelegatedCapabilityClaims(input);
+  if (!('backend' in claims)) {
+    throw new SupabashError('INVALID_CAPABILITY', 'Capability backend is not Postgres.');
+  }
   await consumeDelegatedCapabilityNonce(claims, input.verifier);
   return claims;
 };
 
 export const verifyDelegatedCapabilityClaims = async (
   input: VerifyDelegatedCapabilityInput,
-): Promise<DelegatedCapabilityClaims> => {
+): Promise<AnyDelegatedCapabilityClaims> => {
   try {
     return await verifyInner(input);
   } catch (error) {
@@ -33,7 +49,7 @@ export const verifyDelegatedCapabilityClaims = async (
 
 const verifyInner = async (
   input: VerifyDelegatedCapabilityInput,
-): Promise<DelegatedCapabilityClaims> => {
+): Promise<AnyDelegatedCapabilityClaims> => {
   const unverifiedHeader = peekCompactJwsHeader(input.capability);
   const keyId = jwsKeyId(unverifiedHeader);
   const publicKey = input.verifier.publicKeys[keyId];
@@ -52,7 +68,7 @@ const verifyInner = async (
 };
 
 const assertAudience = (
-  claims: DelegatedCapabilityClaims,
+  claims: AnyDelegatedCapabilityClaims,
   verifier: VerifyDelegatedCapabilityInput['verifier'],
 ): void => {
   if (claims.iss !== verifier.issuer || claims.aud !== verifier.audience) {
@@ -64,7 +80,7 @@ const assertAudience = (
 };
 
 const assertFresh = (
-  claims: DelegatedCapabilityClaims,
+  claims: AnyDelegatedCapabilityClaims,
   input: VerifyDelegatedCapabilityInput,
 ): void => {
   const skew = input.verifier.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
@@ -91,7 +107,7 @@ const assertFresh = (
 };
 
 export const consumeDelegatedCapabilityNonce = async (
-  claims: DelegatedCapabilityClaims,
+  claims: AnyDelegatedCapabilityClaims,
   verifier: VerifyDelegatedCapabilityInput['verifier'],
 ): Promise<void> => {
   const store = verifier.nonceStore;

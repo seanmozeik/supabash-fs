@@ -12,6 +12,7 @@ import type { WorkspaceEntryKind } from '../api/contracts.js';
 import { SupabashError } from '../api/errors.js';
 import { comparePaths, compareRemoteEntryPaths } from './entry-order.js';
 import { moveDescendant, normalizeVirtualPath, ROOT_PATH } from './path.js';
+import { isRuntimeOwnedPath } from './runtime-paths.js';
 import type { PendingChanges, PendingMove, RemoteEntry, UploadDraft } from './storage.js';
 import {
   entriesWithin,
@@ -27,7 +28,6 @@ import { pendingAgainstBaseline, rebuildLiveTree } from './tracked-restore.js';
 
 type ReadOptions = Parameters<IFileSystem['readFile']>[1];
 type WriteOptions = Parameters<IFileSystem['writeFile']>[2];
-
 export class TrackedFileSystem implements IFileSystem {
   private baseline = new Map<string, RemoteEntry>();
   private readonly baselineHashes = new Map<string, Promise<string>>();
@@ -59,10 +59,11 @@ export class TrackedFileSystem implements IFileSystem {
   }
 
   private async reset(entries: readonly RemoteEntry[]): Promise<void> {
-    const live = await rebuildLiveTree(entries, this.download, false, this.maxTotalBytes);
+    const persistent = entries.filter((entry) => !isRuntimeOwnedPath(entry.path));
+    const live = await rebuildLiveTree(persistent, this.download, false, this.maxTotalBytes);
     this.inner = live.inner;
     this.kinds = live.kinds;
-    this.baseline = new Map(entries.map((entry) => [entry.path, entry]));
+    this.baseline = new Map(persistent.map((entry) => [entry.path, entry]));
     this.baselineHashes.clear();
     this.deletions.clear();
     this.moves.clear();
@@ -75,10 +76,11 @@ export class TrackedFileSystem implements IFileSystem {
     download: (entry: RemoteEntry) => Promise<Uint8Array>,
   ): Promise<void> {
     this.assertMutable();
-    const live = await rebuildLiveTree(entries, download, true, this.maxTotalBytes);
+    const persistent = entries.filter((entry) => !isRuntimeOwnedPath(entry.path));
+    const live = await rebuildLiveTree(persistent, download, true, this.maxTotalBytes);
     this.inner = live.inner;
     this.kinds = live.kinds;
-    const pending = pendingAgainstBaseline(this.baseline, entries);
+    const pending = pendingAgainstBaseline(this.baseline, persistent);
     this.deletions = pending.deletions;
     this.moves.clear();
     this.upserts = pending.upserts;
@@ -107,11 +109,14 @@ export class TrackedFileSystem implements IFileSystem {
 
   pendingPreview(): PendingChanges {
     return {
-      deletions: [...this.deletions.values()].toSorted(compareRemoteEntryPaths),
+      deletions: [...this.deletions.values()]
+        .filter((entry) => !isRuntimeOwnedPath(entry.path))
+        .toSorted(compareRemoteEntryPaths),
       moves: [...this.moves]
         .map(([from, to]): PendingMove => ({ from, to }))
+        .filter((move) => !isRuntimeOwnedPath(move.from) && !isRuntimeOwnedPath(move.to))
         .toSorted((left, right) => comparePaths(left.from, right.from)),
-      upserts: [...this.upserts].toSorted(comparePaths),
+      upserts: [...this.upserts].filter((path) => !isRuntimeOwnedPath(path)).toSorted(comparePaths),
     };
   }
 

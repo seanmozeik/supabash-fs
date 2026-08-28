@@ -2,6 +2,7 @@ import type { WorkspaceLimits } from '../history/limits.js';
 import type { CommitCoordinator } from './commit.js';
 
 export const CAPABILITY_SCHEMA_VERSION = 1;
+export const POSTGRES_CAPABILITY_SCHEMA_VERSION = 2;
 export const DEFAULT_CLOCK_SKEW_SECONDS = 60;
 export const DEFAULT_MAX_CAPABILITY_LIFETIME_SECONDS = 900;
 
@@ -29,8 +30,27 @@ export interface DelegatedCapabilityClaims {
   readonly sv: number;
 }
 
+export interface PostgresDelegatedCapabilityClaims {
+  readonly aud: string;
+  readonly backend: 'postgres';
+  readonly corr: string;
+  readonly exp: number;
+  readonly iat: number;
+  readonly iss: string;
+  readonly nonce: string;
+  readonly ops: readonly DelegatedOperation[];
+  readonly origin: string;
+  readonly sub: string;
+  readonly sv: typeof POSTGRES_CAPABILITY_SCHEMA_VERSION;
+  readonly workspace: string;
+}
+
+export type AnyDelegatedCapabilityClaims =
+  | DelegatedCapabilityClaims
+  | PostgresDelegatedCapabilityClaims;
+
 export interface CreateDelegatedCapabilityInput {
-  readonly claims: DelegatedCapabilityClaims;
+  readonly claims: AnyDelegatedCapabilityClaims;
   readonly keyId: string;
   readonly privateKey: CryptoKey;
 }

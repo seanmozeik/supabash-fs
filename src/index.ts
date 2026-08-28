@@ -7,11 +7,16 @@
 import {
   CAPABILITY_SCHEMA_VERSION as capabilitySchemaVersion,
   DEFAULT_MAX_CAPABILITY_LIFETIME_SECONDS as defaultMaxCapabilityLifetimeSeconds,
+  POSTGRES_CAPABILITY_SCHEMA_VERSION as postgresCapabilitySchemaVersion,
 } from './api/capability.js';
 import { HISTORY_SCHEMA_VERSION as historySchemaVersion } from './api/commit.js';
+import { POSTGRES_WORKSPACE_CAPABILITIES as postgresWorkspaceCapabilities } from './api/postgres.js';
 import { Supabash as openWorkspace, SupabashError as WorkspaceError } from './api/supabash.js';
 import { createDelegatedCapability as signDelegatedCapability } from './capability/create.js';
-import { verifyDelegatedCapability as checkDelegatedCapability } from './capability/verify.js';
+import {
+  verifyDelegatedCapability as checkDelegatedCapability,
+  verifyPostgresDelegatedCapability as checkPostgresDelegatedCapability,
+} from './capability/verify.js';
 import {
   DEFAULT_MAX_DIFF_PREVIEW_BYTES as defaultMaxDiffPreviewBytes,
   DEFAULT_MAX_FILE_SIZE as defaultMaxFileSize,
@@ -37,20 +42,36 @@ import {
 
 export type {
   CapabilityNonceStore,
+  AnyDelegatedCapabilityClaims,
   CreateDelegatedCapabilityInput,
   DelegatedCapabilityClaims,
   DelegatedOperation,
   DelegatedVerifier,
   OpenDelegatedOptions,
+  PostgresDelegatedCapabilityClaims,
   VerifyDelegatedCapabilityInput,
 } from './api/capability.js';
 export type {
   CommitReceipt,
   Workspace,
+  WorkspaceBackendKind,
+  WorkspaceCapabilities,
   WorkspaceChange,
   WorkspaceChangeKind,
   WorkspaceEntryKind,
 } from './api/contracts.js';
+export type {
+  WorkspaceObservability,
+  WorkspaceOperation,
+  WorkspaceOperationEvent,
+} from './api/observability.js';
+export type {
+  CreatePostgresWorkspaceOptions,
+  OpenPostgresDelegatedOptions,
+  PostgresWorkspace,
+  PostgresWorkspaceCapabilities,
+  PostgresWorkspaceOptions,
+} from './api/postgres.js';
 export type {
   CommitContext,
   CommitCoordinator,
@@ -98,6 +119,7 @@ export type {
 } from './policy/types.js';
 
 export const CAPABILITY_SCHEMA_VERSION = capabilitySchemaVersion;
+export const POSTGRES_CAPABILITY_SCHEMA_VERSION = postgresCapabilitySchemaVersion;
 export const DEFAULT_MAX_CAPABILITY_LIFETIME_SECONDS = defaultMaxCapabilityLifetimeSeconds;
 export const DEFAULT_MAX_COMMAND_LENGTH = defaultMaxCommandLength;
 export const DEFAULT_MAX_DIFF_PREVIEW_BYTES = defaultMaxDiffPreviewBytes;
@@ -112,6 +134,7 @@ export const DEFAULT_MAX_STAGED_BYTES = defaultMaxStagedBytes;
 export const DEFAULT_MAX_TRANSACTION_METADATA_BYTES = defaultMaxTransactionMetadataBytes;
 export const DEFAULT_MAX_VISIBLE_FILES = defaultMaxVisibleFiles;
 export const HISTORY_SCHEMA_VERSION = historySchemaVersion;
+export const POSTGRES_WORKSPACE_CAPABILITIES = postgresWorkspaceCapabilities;
 export const Supabash = openWorkspace;
 export const SupabashError = WorkspaceError;
 export const applyDiff = applyV4ADiff;
@@ -120,3 +143,4 @@ export const applyPatchOperations = applyWorkspacePatchOperations;
 export const createCommandPolicy = createWorkspaceCommandPolicy;
 export const createDelegatedCapability = signDelegatedCapability;
 export const verifyDelegatedCapability = checkDelegatedCapability;
+export const verifyPostgresDelegatedCapability = checkPostgresDelegatedCapability;

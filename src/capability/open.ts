@@ -16,6 +16,12 @@ export const openDelegated = async (options: OpenDelegatedOptions): Promise<Work
     capability: options.capability,
     verifier: options.verifier,
   });
+  if ('backend' in claims) {
+    throw new SupabashError(
+      'INVALID_CAPABILITY',
+      'Capability backend does not match open options.',
+    );
+  }
   if (claims.bucket !== options.bucket) {
     throw new SupabashError('INVALID_CAPABILITY', 'Capability bucket does not match open options.');
   }
