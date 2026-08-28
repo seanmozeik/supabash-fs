@@ -48,6 +48,30 @@ describe('postgres backend', () => {
     });
   });
 
+  test('loads an empty UTF-8 document', async () => {
+    const rpc = vi.fn<PostgresRpcClient['rpc']>(() =>
+      Promise.resolve({
+        data: {
+          ...snapshot(),
+          documents: [
+            {
+              body: '',
+              bodyHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+              byteSize: 0,
+              path: '/empty.md',
+            },
+          ],
+        },
+        error: null,
+      }),
+    );
+    const backend = createPostgresBackend({ client: { rpc }, workspace });
+
+    await expect(backend.loadSnapshot()).resolves.toMatchObject({
+      documents: [{ body: '', byteSize: 0, path: '/empty.md' }],
+    });
+  });
+
   test('rejects unsupported persistent text-tree features before commit RPC', async () => {
     const rpc = vi.fn<PostgresRpcClient['rpc']>((name) =>
       Promise.resolve(

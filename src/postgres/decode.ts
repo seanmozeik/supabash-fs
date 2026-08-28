@@ -28,6 +28,7 @@ import {
   optionalString,
   primitiveString,
   stringField as string,
+  textField as text,
 } from './decode-fields.js';
 
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -119,7 +120,7 @@ export const decodePurge = (value: unknown): PurgeReceipt => {
 
 const decodeDocument = (value: unknown): BackendDocument => {
   const record = object(value, 'snapshot document');
-  const body = string(record, 'body');
+  const body = text(record, 'body');
   const bodyHash = string(record, 'bodyHash', 'body_hash', 'contentHash', 'content_hash');
   const byteSize = number(record, 'byteSize', 'byte_size', 'size');
   const path = string(record, 'path');

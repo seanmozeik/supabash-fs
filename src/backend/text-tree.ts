@@ -46,11 +46,31 @@ export const snapshotFromFileSystem = async (
   };
 };
 
-export const projectSnapshot = (
+export interface TextTreeProjection {
+  readonly filesystem: TrackedFileSystem;
+  readonly replaceSnapshotBodies: (snapshot: PinnedSnapshot) => void;
+}
+
+export const projectSnapshot = async (
   snapshot: PinnedSnapshot,
   maxFileSystemBytes?: number,
-): Promise<TrackedFileSystem> =>
-  TrackedFileSystem.create(entriesFrom(snapshot), bodyLoader(snapshot), maxFileSystemBytes);
+): Promise<TextTreeProjection> => {
+  const bodies = snapshotBodyMap(snapshot);
+  const filesystem = await TrackedFileSystem.create(
+    entriesFrom(snapshot),
+    loadSnapshotBody(bodies),
+    maxFileSystemBytes,
+  );
+  return {
+    filesystem,
+    replaceSnapshotBodies(next) {
+      bodies.clear();
+      for (const [path, body] of snapshotBodyMap(next)) {
+        bodies.set(path, body);
+      }
+    },
+  };
+};
 
 export const entriesFrom = (snapshot: PinnedSnapshot): readonly RemoteEntry[] =>
   snapshot.documents
@@ -65,10 +85,19 @@ export const entriesFrom = (snapshot: PinnedSnapshot): readonly RemoteEntry[] =>
       versionHash: document.contentHash,
     }));
 
-export const bodyLoader = (snapshot: PinnedSnapshot) => {
-  const bodies = new Map(
-    snapshot.documents.map(({ body, path }) => [path, textEncoder.encode(body)]),
-  );
+export const bodyLoader = (
+  snapshot: PinnedSnapshot,
+): ((entry: RemoteEntry) => Promise<Uint8Array>) => {
+  const bodies = snapshotBodyMap(snapshot);
+  return loadSnapshotBody(bodies);
+};
+
+const snapshotBodyMap = (snapshot: PinnedSnapshot): Map<string, Uint8Array> =>
+  new Map(snapshot.documents.map(({ body, path }) => [path, textEncoder.encode(body)]));
+
+const loadSnapshotBody = (
+  bodies: ReadonlyMap<string, Uint8Array>,
+): ((entry: RemoteEntry) => Promise<Uint8Array>) => {
   return (entry: RemoteEntry): Promise<Uint8Array> => {
     const body = bodies.get(entry.path);
     if (body === undefined) {

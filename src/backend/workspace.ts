@@ -50,6 +50,7 @@ import {
   snapshotDetails,
   snapshotFromFileSystem,
   TEXT_FILE_MODE,
+  type TextTreeProjection,
   unsupported,
 } from './text-tree.js';
 
@@ -71,9 +72,9 @@ export const createBackendWorkspace = async (
     'filesystem-projection',
   );
   try {
-    const filesystem = await projectSnapshot(snapshot, options.maxFileSystemBytes);
+    const projection = await projectSnapshot(snapshot, options.maxFileSystemBytes);
     timer.success(snapshotDetails(snapshot));
-    return new BackendWorkspace(backend, filesystem, snapshot, options);
+    return new BackendWorkspace(backend, projection, snapshot, options);
   } catch (error) {
     timer.failure(error, snapshotDetails(snapshot));
     throw error;
@@ -85,12 +86,13 @@ class BackendWorkspace implements PostgresWorkspace {
   readonly fs: TrackedFileSystem;
   private readonly backend: WorkspaceBackend;
   private readonly limits: WorkspaceLimits;
+  private readonly replaceSnapshotBodies: TextTreeProjection['replaceSnapshotBodies'];
   private restoreSourceRevision: string | undefined;
   private snapshot: PinnedSnapshot;
 
   constructor(
     backend: WorkspaceBackend,
-    filesystem: TrackedFileSystem,
+    projection: TextTreeProjection,
     snapshot: PinnedSnapshot,
     options: BackendWorkspaceOptions,
   ) {
@@ -99,7 +101,8 @@ class BackendWorkspace implements PostgresWorkspace {
     }
     this.backend = backend;
     this.capabilities = POSTGRES_WORKSPACE_CAPABILITIES;
-    this.fs = filesystem;
+    this.fs = projection.filesystem;
+    this.replaceSnapshotBodies = projection.replaceSnapshotBodies;
     this.snapshot = snapshot;
     this.limits = options.limits ?? {};
   }
@@ -147,6 +150,7 @@ class BackendWorkspace implements PostgresWorkspace {
         transactionId: crypto.randomUUID(),
       });
       this.snapshot = await snapshotFromFileSystem(this.fs, result.receipt);
+      this.replaceSnapshotBodies(this.snapshot);
       await this.fs.finishCommit(entriesFrom(this.snapshot));
       this.restoreSourceRevision = undefined;
       return result.receipt;

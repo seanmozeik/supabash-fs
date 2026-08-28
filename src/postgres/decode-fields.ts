@@ -23,6 +23,14 @@ export const arrayField = (
 export const stringField = (record: Record<string, unknown>, ...keys: readonly string[]): string =>
   primitiveString(decodeValueAt(record, ...keys), keys[0] ?? 'unknown');
 
+export const textField = (record: Record<string, unknown>, ...keys: readonly string[]): string => {
+  const value = decodeValueAt(record, ...keys);
+  if (typeof value !== 'string') {
+    throw corrupt(`Postgres field '${keys[0] ?? 'unknown'}' is not a string.`);
+  }
+  return value;
+};
+
 export const primitiveString = (value: unknown, label: string): string => {
   if (typeof value !== 'string' || value.length === 0) {
     throw corrupt(`Postgres field '${label}' is not a non-empty string.`);
