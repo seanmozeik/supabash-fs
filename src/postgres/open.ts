@@ -26,6 +26,7 @@ export const openPostgres = async (
   const backend = createPostgresBackend({
     client,
     workspace: options.workspace,
+    ...(options.documentCodec !== undefined && { documentCodec: options.documentCodec }),
     ...(options.observability !== undefined && { observability: options.observability }),
   });
   return createBackendWorkspace(backend, {
@@ -79,6 +80,7 @@ export const openPostgresDelegated = async (
     client,
     delegatedGrant: grant.delegatedGrant,
     workspace: claims.workspace,
+    ...(options.documentCodec !== undefined && { documentCodec: options.documentCodec }),
     ...(options.observability !== undefined && { observability: options.observability }),
   });
   const workspace = await createBackendWorkspace(backend, {

@@ -1,6 +1,7 @@
 import type { WorkspaceLimits } from '../history/limits.js';
 import type { DelegatedVerifier } from './capability.js';
 import type { Workspace, WorkspaceCapabilities } from './contracts.js';
+import type { TextDocumentCodec } from './document-codec.js';
 import type { WorkspaceObservability } from './observability.js';
 
 export const POSTGRES_WORKSPACE_CAPABILITIES = Object.freeze({
@@ -20,6 +21,7 @@ export interface PostgresWorkspace extends Workspace {
 export interface PostgresWorkspaceOptions {
   /** The one canonical workspace identifier understood by the installed SQL functions. */
   readonly workspace: string;
+  readonly documentCodec?: TextDocumentCodec;
   readonly fetch?: typeof globalThis.fetch;
   readonly limits?: WorkspaceLimits;
   readonly maxFileSystemBytes?: number;
@@ -38,6 +40,7 @@ export interface CreatePostgresWorkspaceOptions {
 
 export interface OpenPostgresDelegatedOptions {
   readonly capability: string;
+  readonly documentCodec?: TextDocumentCodec;
   readonly fetch?: typeof globalThis.fetch;
   readonly limits?: WorkspaceLimits;
   readonly maxFileSystemBytes?: number;

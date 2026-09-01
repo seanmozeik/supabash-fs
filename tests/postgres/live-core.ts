@@ -1,4 +1,4 @@
-import type { CommitReceipt } from '@seanmozeik/supabash-fs';
+import { createYamlFrontmatterCodec, type CommitReceipt } from '@seanmozeik/supabash-fs';
 import { createTools } from '@seanmozeik/supabash-fs/ai-sdk';
 import type { ToolSet } from 'ai';
 
@@ -43,7 +43,49 @@ export const proveCore = async (context: LiveContext, user: TestUser): Promise<C
   const atomic = await proveTools(context, user.accessToken, workspaceId, seed);
   await proveCas(context, user.accessToken, workspaceId);
   await proveRollback(context, user.accessToken);
+  await proveDocumentCodec(context, user.accessToken);
   return { atomic, seed, user, workspaceId };
+};
+
+const proveDocumentCodec = async (context: LiveContext, accessToken: string): Promise<void> => {
+  const workspaceId = await context.createWorkspace(accessToken);
+  const codec = createYamlFrontmatterCodec();
+  const workspace = await context.open(accessToken, workspaceId, codec);
+  const first =
+    '---\ndescription: How demanding work affects recovery\n---\n# Pacing\n\nProtect recovery.\n';
+  await workspace.fs.writeFile('/pacing.md', first);
+  const seed = await workspace.commit({
+    context: { actor: 'codec-seed', correlationId: `${context.runId}-codec-seed` },
+  });
+  const reopened = await context.open(accessToken, workspaceId, codec);
+  assert(
+    (await reopened.fs.readFile('/pacing.md')) ===
+      '---\ndescription: "How demanding work affects recovery"\n---\n# Pacing\n\nProtect recovery.\n',
+    'YAML metadata did not round trip through the Postgres column.',
+  );
+  await reopened.fs.writeFile(
+    '/pacing.md',
+    '---\ndescription: A revised route for recovery\n---\n# Pacing\n\nProtect recovery.\n',
+  );
+  const changed = await reopened.commit({
+    context: { actor: 'codec-update', correlationId: `${context.runId}-codec-update` },
+  });
+  const diff = await reopened.diff({
+    from: { revision: seed.revision },
+    to: { revision: changed.revision },
+  });
+  assert(
+    diff.entries[0]?.kind === 'modified' &&
+      diff.entries[0].preview?.includes('A revised route for recovery') === true,
+    'A metadata-only change did not appear in revision diff.',
+  );
+  const historical = await reopened.readRevision(seed.revision);
+  const historicalContent = await historical.readFile('/pacing.md');
+  assert(
+    historicalContent.includes('How demanding work affects recovery'),
+    'Historical metadata did not render from its revision.',
+  );
+  context.record('YAML metadata columns, visible diffs, and historical rendering');
 };
 
 const proveSnapshot = async (

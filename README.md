@@ -229,6 +229,48 @@ if (patched.status !== 'completed') {
 }
 ```
 
+An optional document codec can separate agent-visible YAML frontmatter from
+the stored text body. The built-in codec accepts one flat mapping of string,
+number, boolean, or null values. It renders deterministic YAML when the
+workspace opens, so metadata changes participate in the same revision, diff,
+checkpoint, and restore history as body changes.
+
+```ts
+import { createYamlFrontmatterCodec, Supabash } from '@seanmozeik/supabash-fs';
+
+const documentCodec = createYamlFrontmatterCodec({
+  validate(metadata, path) {
+    if (typeof metadata.description !== 'string') {
+      throw new TypeError(`${path} needs a description`);
+    }
+  },
+});
+
+const mounted = await Supabash.openPostgres({
+  documentCodec,
+  publishableKey,
+  request,
+  supabaseUrl,
+  workspace,
+});
+```
+
+For this visible file:
+
+```md
+---
+description: A short route to the document's distinct context
+---
+
+# Pacing after demanding work
+
+Protect recovery time after a long call.
+```
+
+Postgres stores `description` in the revision entry's `metadata` column and
+stores the Markdown beginning at the heading in the content-addressed body.
+The projected filesystem reconstructs the complete file.
+
 `applyPatch` supports `create_file`, `update_file` with optional `moveTo`, and
 `delete_file`. Paths go through the same canonical parser as the filesystem.
 A failed operation does not leave a partial local mutation. Batches default to
@@ -634,6 +676,7 @@ interface SupabashOptions {
 
 interface PostgresWorkspaceOptions {
   readonly workspace: string;
+  readonly documentCodec?: TextDocumentCodec;
   readonly fetch?: typeof globalThis.fetch;
   readonly limits?: WorkspaceLimits;
   readonly maxFileSystemBytes?: number;

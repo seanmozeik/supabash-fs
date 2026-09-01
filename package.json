@@ -69,7 +69,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "2.112.4",
-    "unbash": "4.0.10"
+    "unbash": "4.0.10",
+    "yaml": "2.9.0"
   },
   "devDependencies": {
     "@ai-sdk/openai": "4.0.50",

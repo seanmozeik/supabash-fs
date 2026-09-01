@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 
+import { createYamlFrontmatterCodec } from '../../src/api/document-codec.ts';
 import type { SupabashError } from '../../src/api/errors.ts';
 import { asUnknownRecord, type JsonValue } from '../../src/api/json.ts';
 import { createBackendWorkspace } from '../../src/backend/workspace.ts';
@@ -72,6 +73,39 @@ describe('postgres backend', () => {
     });
   });
 
+  test('projects stored metadata into canonical YAML frontmatter', async () => {
+    const body = '# Pacing\n\nProtect recovery time.\n';
+    const content =
+      '---\ndescription: "How demanding work affects recovery"\n---\n# Pacing\n\nProtect recovery time.\n';
+    const rpc = vi.fn<PostgresRpcClient['rpc']>(() =>
+      Promise.resolve({
+        data: {
+          ...emptySnapshot(),
+          documents: [
+            {
+              body,
+              bodyByteSize: new TextEncoder().encode(body).byteLength,
+              bodyHash: 'a'.repeat(64),
+              byteSize: new TextEncoder().encode(content).byteLength,
+              contentHash: 'b'.repeat(64),
+              metadata: { description: 'How demanding work affects recovery' },
+              path: '/pacing.md',
+            },
+          ],
+        },
+        error: null,
+      }),
+    );
+    const backend = createPostgresBackend({
+      client: { rpc },
+      documentCodec: createYamlFrontmatterCodec(),
+      workspace,
+    });
+    const opened = await createBackendWorkspace(backend);
+
+    await expect(opened.fs.readFile('/pacing.md')).resolves.toBe(content);
+  });
+
   test('rejects unsupported persistent text-tree features before commit RPC', async () => {
     const rpc = vi.fn<PostgresRpcClient['rpc']>((name) =>
       Promise.resolve(
@@ -139,6 +173,43 @@ describe('postgres backend', () => {
     const mutations = commitArguments?.['p_changes'];
     const firstMutation = Array.isArray(mutations) ? asUnknownRecord(mutations[0]) : undefined;
     expect(firstMutation?.['bodyHash']).toMatch(/^[0-9a-f]{64}$/u);
+  });
+
+  test('sends frontmatter as document metadata instead of stored body text', async () => {
+    let commitArguments: Readonly<Record<string, JsonValue>> | undefined;
+    const rpc = vi.fn<PostgresRpcClient['rpc']>((name, args) => {
+      if (name !== 'supabash_load_workspace') {
+        commitArguments = args;
+      }
+      return Promise.resolve(
+        name === 'supabash_load_workspace'
+          ? { data: emptySnapshot(), error: null }
+          : { data: null, error: { message: 'stop after capture' } },
+      );
+    });
+    const opened = await createBackendWorkspace(
+      createPostgresBackend({
+        client: { rpc },
+        documentCodec: createYamlFrontmatterCodec(),
+        workspace,
+      }),
+    );
+    await opened.fs.writeFile(
+      '/pacing.md',
+      '---\ndescription: Durable pacing context\n---\n# Pacing\n\nProtect recovery.\n',
+    );
+
+    await expect(opened.commit()).rejects.toMatchObject({ code: 'STORAGE' });
+    expect(commitArguments).toMatchObject({
+      p_changes: [
+        {
+          body: '# Pacing\n\nProtect recovery.\n',
+          kind: 'upsert',
+          metadata: { description: 'Durable pacing context' },
+          path: '/pacing.md',
+        },
+      ],
+    });
   });
 
   test('normalizes history and purge limits before an RPC', async () => {

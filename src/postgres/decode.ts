@@ -1,4 +1,9 @@
 import type { CommitReceipt, WorkspaceChange, WorkspaceEntryKind } from '../api/contracts.js';
+import type {
+  DocumentMetadata,
+  DocumentMetadataValue,
+  TextDocumentCodec,
+} from '../api/document-codec.js';
 import { SupabashError } from '../api/errors.js';
 import type {
   CheckpointReceipt,
@@ -10,6 +15,7 @@ import type {
   RevisionDiffEntry,
   RevisionDiffKind,
 } from '../api/history.js';
+import type { JsonValue } from '../api/json.js';
 import type { BackendDocument, PinnedSnapshot } from '../backend/contracts.js';
 import { normalizeVirtualPath } from '../core/path.js';
 import { isRuntimeOwnedPath } from '../core/runtime-paths.js';
@@ -33,12 +39,15 @@ import {
 
 const SHA256 = /^[0-9a-f]{64}$/u;
 
-export const decodeSnapshot = (value: unknown): PinnedSnapshot => {
+export const decodeSnapshot = (
+  value: unknown,
+  documentCodec: TextDocumentCodec,
+): PinnedSnapshot => {
   const record = object(value, 'snapshot');
   const revision = nullableString(record, 'headRevision', 'head_revision', 'revision');
   const committedAt = optionalString(record, 'committedAt', 'committed_at');
   const transactionId = optionalString(record, 'transactionId', 'transaction_id');
-  const documents = array(record, 'documents').map((entry) => decodeDocument(entry));
+  const documents = array(record, 'documents').map((entry) => decodeDocument(entry, documentCodec));
   if (new Set(documents.map(({ path }) => path)).size !== documents.length) {
     throw corrupt('Postgres snapshot contains duplicate document paths.');
   }
@@ -118,11 +127,14 @@ export const decodePurge = (value: unknown): PurgeReceipt => {
   };
 };
 
-const decodeDocument = (value: unknown): BackendDocument => {
+const decodeDocument = (value: unknown, documentCodec: TextDocumentCodec): BackendDocument => {
   const record = object(value, 'snapshot document');
   const body = text(record, 'body');
   const bodyHash = string(record, 'bodyHash', 'body_hash', 'contentHash', 'content_hash');
-  const byteSize = number(record, 'byteSize', 'byte_size', 'size');
+  const bodyByteSize =
+    optionalNumber(record, 'bodyByteSize', 'body_byte_size') ??
+    number(record, 'byteSize', 'byte_size', 'size');
+  const metadata = documentMetadata(optionalJsonObject(record, 'metadata') ?? {}, record);
   const path = string(record, 'path');
   let canonical: string;
   try {
@@ -136,17 +148,48 @@ const decodeDocument = (value: unknown): BackendDocument => {
   if (canonical !== path || isRuntimeOwnedPath(path)) {
     throw corrupt('Snapshot document path is not one canonical user path.', path);
   }
-  if (!SHA256.test(bodyHash)) {
-    throw corrupt('Snapshot document content hash is invalid.', path);
+  const content = documentCodec.render({ body, metadata, path });
+  const contentHash = optionalString(record, 'contentHash', 'content_hash') ?? bodyHash;
+  const byteSize =
+    optionalNumber(record, 'contentByteSize', 'content_byte_size') ??
+    number(record, 'byteSize', 'byte_size', 'size');
+  if (!SHA256.test(bodyHash) || !SHA256.test(contentHash)) {
+    throw corrupt('Snapshot document hash is invalid.', path);
   }
-  if (new TextEncoder().encode(body).byteLength !== byteSize) {
-    throw corrupt('Snapshot document byte size does not match its UTF-8 body.', path);
+  if (new TextEncoder().encode(body).byteLength !== bodyByteSize) {
+    throw corrupt('Snapshot stored byte size does not match its UTF-8 body.', path);
+  }
+  if (new TextEncoder().encode(content).byteLength !== byteSize) {
+    throw corrupt('Snapshot visible byte size does not match its rendered document.', path);
   }
   if (body.includes('\0')) {
     throw new SupabashError('UNSUPPORTED_CONTENT', 'Postgres text contains NUL.', { path });
   }
-  return { body, byteSize, contentHash: bodyHash, path };
+  return { body, bodyByteSize, bodyHash, byteSize, content, contentHash, metadata, path };
 };
+
+const documentMetadata = (
+  value: Readonly<Record<string, JsonValue>>,
+  record: Readonly<Record<string, unknown>>,
+): DocumentMetadata => {
+  const metadata: Record<string, DocumentMetadataValue> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (!isDocumentMetadataValue(entry)) {
+      throw corrupt(
+        'Snapshot document metadata is not a flat scalar mapping.',
+        String(record['path']),
+      );
+    }
+    metadata[key] = entry;
+  }
+  return metadata;
+};
+
+const isDocumentMetadataValue = (value: unknown): value is DocumentMetadataValue =>
+  value === null ||
+  typeof value === 'string' ||
+  typeof value === 'boolean' ||
+  (typeof value === 'number' && Number.isFinite(value));
 
 const decodeReceipt = (value: unknown): CommitReceipt => {
   const record = object(value, 'commit receipt');

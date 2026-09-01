@@ -7,6 +7,11 @@
   grouped commands without treating ordinary compound Bash as unsupported.
 - Keep command policy as a damage limiter. Workspace scoping and backend
   authorization remain the security boundary.
+- Add a Postgres text-document codec contract and a YAML-frontmatter codec.
+  Persist the UTF-8 body and flat scalar metadata separately while projecting
+  one canonical Markdown file into Just Bash.
+- Include document metadata in immutable revision manifests, visible content
+  hashes, diffs, historical reads, moves, restore, and atomic commits.
 
 ## 0.3.0
 

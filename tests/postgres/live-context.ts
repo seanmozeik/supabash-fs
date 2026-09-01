@@ -1,4 +1,4 @@
-import { Supabash, type PostgresWorkspace } from '@seanmozeik/supabash-fs';
+import { Supabash, type PostgresWorkspace, type TextDocumentCodec } from '@seanmozeik/supabash-fs';
 
 import type { IntegrationRuntime } from './runtime.ts';
 
@@ -90,7 +90,11 @@ export class LiveContext {
     return !response.ok;
   }
 
-  open(accessToken: string, workspace: string): Promise<PostgresWorkspace> {
+  open(
+    accessToken: string,
+    workspace: string,
+    documentCodec?: TextDocumentCodec,
+  ): Promise<PostgresWorkspace> {
     return Supabash.openPostgres({
       publishableKey: this.publishableKey,
       request: new Request('https://workspace.example.test', {
@@ -98,6 +102,7 @@ export class LiveContext {
       }),
       supabaseUrl: this.supabaseUrl,
       workspace,
+      ...(documentCodec !== undefined && { documentCodec }),
     });
   }
 

@@ -95,6 +95,42 @@ as $function$
   select encode(extensions.digest(convert_to(p_value, 'UTF8'), 'sha256'), 'hex');
 $function$;
 
+create function supabash.is_document_metadata(p_metadata jsonb)
+returns boolean
+language sql
+immutable
+parallel safe
+set search_path = pg_catalog
+as $function$
+  select
+    jsonb_typeof(p_metadata) = 'object'
+    and not exists (
+      select 1
+      from jsonb_each(p_metadata) as field(key, value)
+      where field.key !~ '^[A-Za-z_][A-Za-z0-9_-]*$'
+        or jsonb_typeof(field.value) not in ('null', 'boolean', 'number', 'string')
+    );
+$function$;
+
+create function supabash.render_document(p_body text, p_metadata jsonb)
+returns text
+language sql
+immutable
+strict
+parallel safe
+set search_path = pg_catalog
+as $function$
+  select case
+    when p_metadata = '{}'::jsonb then p_body
+    else '---' || chr(10)
+      || (
+        select string_agg(field.key || ': ' || field.value::text, chr(10) order by field.key collate "C")
+        from jsonb_each(p_metadata) as field(key, value)
+      )
+      || chr(10) || '---' || chr(10) || p_body
+  end;
+$function$;
+
 create function supabash.base64url_decode(p_value text)
 returns bytea
 language plpgsql
@@ -250,6 +286,9 @@ create table supabash.current_documents (
   path text not null check (supabash.is_document_path(path)),
   body_hash text not null,
   byte_size bigint not null check (byte_size >= 0),
+  metadata jsonb not null default '{}'::jsonb check (supabash.is_document_metadata(metadata)),
+  content_hash text not null check (content_hash ~ '^[0-9a-f]{64}$'),
+  content_byte_size bigint not null check (content_byte_size >= 0),
   primary key (workspace_id, path),
   foreign key (workspace_id, body_hash, byte_size)
     references supabash.bodies(workspace_id, body_hash, byte_size)
@@ -261,6 +300,9 @@ create table supabash.revision_entries (
   path text not null check (supabash.is_document_path(path)),
   body_hash text not null,
   byte_size bigint not null check (byte_size >= 0),
+  metadata jsonb not null default '{}'::jsonb check (supabash.is_document_metadata(metadata)),
+  content_hash text not null check (content_hash ~ '^[0-9a-f]{64}$'),
+  content_byte_size bigint not null check (content_byte_size >= 0),
   primary key (workspace_id, revision_id, path),
   foreign key (workspace_id, revision_id)
     references supabash.workspace_revisions(workspace_id, revision_id) on delete cascade,
@@ -554,7 +596,10 @@ as $function$
         'path', e.path,
         'body', b.body,
         'bodyHash', e.body_hash,
-        'byteSize', e.byte_size
+        'bodyByteSize', e.byte_size,
+        'metadata', e.metadata,
+        'contentHash', e.content_hash,
+        'byteSize', e.content_byte_size
       ) order by e.path)
       from supabash.revision_entries e
       join supabash.bodies b
@@ -774,7 +819,10 @@ begin
         'path', e.path,
         'body', b.body,
         'bodyHash', e.body_hash,
-        'byteSize', e.byte_size
+        'bodyByteSize', e.byte_size,
+        'metadata', e.metadata,
+        'contentHash', e.content_hash,
+        'byteSize', e.content_byte_size
       ) order by e.path)
       from supabash.revision_entries e
       join supabash.bodies b
@@ -854,10 +902,17 @@ declare
   v_body text;
   v_hash text;
   v_size bigint;
+  v_metadata jsonb;
+  v_content text;
+  v_content_hash text;
+  v_content_size bigint;
   v_before_hash text;
   v_before_size bigint;
   v_source_hash text;
   v_source_size bigint;
+  v_source_metadata jsonb;
+  v_source_content_hash text;
+  v_source_content_size bigint;
   v_receipt_change jsonb;
   v_derived_changes jsonb := '[]'::jsonb;
   v_ordinal integer := 0;
@@ -905,17 +960,30 @@ begin
       raise exception using errcode = '22023', message = 'SUPABASH_INVALID_PATH';
     end if;
     if v_kind = 'upsert' then
-      if not (v_change ?& array['body', 'byteSize', 'contentHash'])
+      if not (v_change ?& array[
+          'body', 'bodyByteSize', 'bodyHash', 'byteSize', 'contentHash', 'metadata'
+        ])
         or jsonb_typeof(v_change -> 'body') <> 'string'
+        or jsonb_typeof(v_change -> 'bodyByteSize') <> 'number'
         or jsonb_typeof(v_change -> 'byteSize') <> 'number'
+        or (v_change ->> 'bodyHash') !~ '^[0-9a-f]{64}$'
         or (v_change ->> 'contentHash') !~ '^[0-9a-f]{64}$'
+        or not coalesce(supabash.is_document_metadata(v_change -> 'metadata'), false)
       then
         raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
       end if;
       v_body := v_change ->> 'body';
       v_hash := supabash.sha256_text(v_body);
       v_size := octet_length(v_body);
-      if (v_change ->> 'byteSize')::bigint <> v_size or v_change ->> 'contentHash' <> v_hash then
+      v_metadata := v_change -> 'metadata';
+      v_content := supabash.render_document(v_body, v_metadata);
+      v_content_hash := supabash.sha256_text(v_content);
+      v_content_size := octet_length(v_content);
+      if (v_change ->> 'bodyByteSize')::bigint <> v_size
+        or v_change ->> 'bodyHash' <> v_hash
+        or (v_change ->> 'byteSize')::bigint <> v_content_size
+        or v_change ->> 'contentHash' <> v_content_hash
+      then
         raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
       end if;
     elsif v_kind = 'move' then
@@ -923,18 +991,33 @@ begin
       if not coalesce(supabash.is_document_path(v_from), false) or v_from = v_path then
         raise exception using errcode = '22023', message = 'SUPABASH_INVALID_PATH';
       end if;
-      if (v_change ? 'body') or (v_change ? 'bodyHash') or (v_change ? 'byteSize') then
-        if not (v_change ?& array['body', 'bodyHash', 'byteSize'])
+      if (v_change ? 'body') or (v_change ? 'bodyByteSize') or (v_change ? 'bodyHash')
+        or (v_change ? 'byteSize') or (v_change ? 'contentHash') or (v_change ? 'metadata')
+      then
+        if not (v_change ?& array[
+            'body', 'bodyByteSize', 'bodyHash', 'byteSize', 'contentHash', 'metadata'
+          ])
           or jsonb_typeof(v_change -> 'body') <> 'string'
+          or jsonb_typeof(v_change -> 'bodyByteSize') <> 'number'
           or jsonb_typeof(v_change -> 'byteSize') <> 'number'
           or (v_change ->> 'bodyHash') !~ '^[0-9a-f]{64}$'
+          or (v_change ->> 'contentHash') !~ '^[0-9a-f]{64}$'
+          or not coalesce(supabash.is_document_metadata(v_change -> 'metadata'), false)
         then
           raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
         end if;
         v_body := v_change ->> 'body';
         v_hash := supabash.sha256_text(v_body);
         v_size := octet_length(v_body);
-        if (v_change ->> 'byteSize')::bigint <> v_size or v_change ->> 'bodyHash' <> v_hash then
+        v_metadata := v_change -> 'metadata';
+        v_content := supabash.render_document(v_body, v_metadata);
+        v_content_hash := supabash.sha256_text(v_content);
+        v_content_size := octet_length(v_content);
+        if (v_change ->> 'bodyByteSize')::bigint <> v_size
+          or v_change ->> 'bodyHash' <> v_hash
+          or (v_change ->> 'byteSize')::bigint <> v_content_size
+          or v_change ->> 'contentHash' <> v_content_hash
+        then
           raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
         end if;
       end if;
@@ -1010,8 +1093,13 @@ begin
   );
 
   if v_head is not null then
-    insert into supabash.revision_entries (workspace_id, revision_id, path, body_hash, byte_size)
-    select workspace_id, v_revision, path, body_hash, byte_size
+    insert into supabash.revision_entries (
+      workspace_id, revision_id, path, body_hash, byte_size,
+      metadata, content_hash, content_byte_size
+    )
+    select
+      workspace_id, v_revision, path, body_hash, byte_size,
+      metadata, content_hash, content_byte_size
     from supabash.revision_entries
     where workspace_id = p_workspace_id and revision_id = v_head;
   end if;
@@ -1023,7 +1111,7 @@ begin
     v_path := v_change ->> 'path';
     v_before_hash := null;
     v_before_size := null;
-    select e.body_hash, e.byte_size into v_before_hash, v_before_size
+    select e.content_hash, e.content_byte_size into v_before_hash, v_before_size
     from supabash.revision_entries e
     where e.workspace_id = p_workspace_id and e.revision_id = v_revision and e.path = v_path;
 
@@ -1031,6 +1119,10 @@ begin
       v_body := v_change ->> 'body';
       v_hash := supabash.sha256_text(v_body);
       v_size := octet_length(v_body);
+      v_metadata := v_change -> 'metadata';
+      v_content := supabash.render_document(v_body, v_metadata);
+      v_content_hash := supabash.sha256_text(v_content);
+      v_content_size := octet_length(v_content);
       insert into supabash.bodies (workspace_id, body_hash, body, byte_size)
       values (p_workspace_id, v_hash, v_body, v_size)
       on conflict (workspace_id, body_hash) do nothing;
@@ -1041,18 +1133,39 @@ begin
       ) then
         raise exception using errcode = 'XX001', message = 'SUPABASH_BODY_HASH_COLLISION';
       end if;
-      insert into supabash.current_documents (workspace_id, path, body_hash, byte_size)
-      values (p_workspace_id, v_path, v_hash, v_size)
+      insert into supabash.current_documents (
+        workspace_id, path, body_hash, byte_size,
+        metadata, content_hash, content_byte_size
+      )
+      values (
+        p_workspace_id, v_path, v_hash, v_size,
+        v_metadata, v_content_hash, v_content_size
+      )
       on conflict (workspace_id, path) do update
-        set body_hash = excluded.body_hash, byte_size = excluded.byte_size;
-      insert into supabash.revision_entries (workspace_id, revision_id, path, body_hash, byte_size)
-      values (p_workspace_id, v_revision, v_path, v_hash, v_size)
+        set body_hash = excluded.body_hash,
+          byte_size = excluded.byte_size,
+          metadata = excluded.metadata,
+          content_hash = excluded.content_hash,
+          content_byte_size = excluded.content_byte_size;
+      insert into supabash.revision_entries (
+        workspace_id, revision_id, path, body_hash, byte_size,
+        metadata, content_hash, content_byte_size
+      )
+      values (
+        p_workspace_id, v_revision, v_path, v_hash, v_size,
+        v_metadata, v_content_hash, v_content_size
+      )
       on conflict (workspace_id, revision_id, path) do update
-        set body_hash = excluded.body_hash, byte_size = excluded.byte_size;
+        set body_hash = excluded.body_hash,
+          byte_size = excluded.byte_size,
+          metadata = excluded.metadata,
+          content_hash = excluded.content_hash,
+          content_byte_size = excluded.content_byte_size;
       v_receipt_change := jsonb_strip_nulls(jsonb_build_object(
         'kind', 'upsert', 'entryKind', 'file', 'path', v_path,
         'beforeHash', v_before_hash, 'beforeSize', v_before_size,
-        'afterHash', v_hash, 'afterSize', v_size, 'contentHash', v_hash
+        'afterHash', v_content_hash, 'afterSize', v_content_size,
+        'contentHash', v_content_hash
       ));
     elsif v_kind = 'delete' then
       if v_before_hash is null then
@@ -1069,7 +1182,11 @@ begin
       );
     else
       v_from := v_change ->> 'from';
-      select e.body_hash, e.byte_size into v_source_hash, v_source_size
+      select
+        e.body_hash, e.byte_size, e.metadata, e.content_hash, e.content_byte_size
+      into
+        v_source_hash, v_source_size, v_source_metadata,
+        v_source_content_hash, v_source_content_size
       from supabash.revision_entries e
       where e.workspace_id = p_workspace_id and e.revision_id = v_revision and e.path = v_from;
       if v_source_hash is null then
@@ -1079,6 +1196,10 @@ begin
         v_body := v_change ->> 'body';
         v_hash := supabash.sha256_text(v_body);
         v_size := octet_length(v_body);
+        v_metadata := v_change -> 'metadata';
+        v_content := supabash.render_document(v_body, v_metadata);
+        v_content_hash := supabash.sha256_text(v_content);
+        v_content_size := octet_length(v_content);
         insert into supabash.bodies (workspace_id, body_hash, body, byte_size)
         values (p_workspace_id, v_hash, v_body, v_size)
         on conflict (workspace_id, body_hash) do nothing;
@@ -1092,22 +1213,36 @@ begin
       else
         v_hash := v_source_hash;
         v_size := v_source_size;
+        v_metadata := v_source_metadata;
+        v_content_hash := v_source_content_hash;
+        v_content_size := v_source_content_size;
       end if;
       delete from supabash.current_documents
       where workspace_id = p_workspace_id and path = v_path;
       delete from supabash.revision_entries
       where workspace_id = p_workspace_id and revision_id = v_revision and path = v_path;
       update supabash.current_documents
-      set path = v_path, body_hash = v_hash, byte_size = v_size
+      set path = v_path,
+        body_hash = v_hash,
+        byte_size = v_size,
+        metadata = v_metadata,
+        content_hash = v_content_hash,
+        content_byte_size = v_content_size
       where workspace_id = p_workspace_id and path = v_from;
       update supabash.revision_entries
-      set path = v_path, body_hash = v_hash, byte_size = v_size
+      set path = v_path,
+        body_hash = v_hash,
+        byte_size = v_size,
+        metadata = v_metadata,
+        content_hash = v_content_hash,
+        content_byte_size = v_content_size
       where workspace_id = p_workspace_id and revision_id = v_revision and path = v_from;
       v_receipt_change := jsonb_build_object(
         'kind', 'move', 'entryKind', 'file', 'path', v_path,
         'moveFrom', v_from, 'moveTo', v_path,
-        'beforeHash', v_source_hash, 'beforeSize', v_source_size,
-        'afterHash', v_hash, 'afterSize', v_size, 'contentHash', v_hash
+        'beforeHash', v_source_content_hash, 'beforeSize', v_source_content_size,
+        'afterHash', v_content_hash, 'afterSize', v_content_size,
+        'contentHash', v_content_hash
       );
     end if;
     v_derived_changes := v_derived_changes || jsonb_build_array(v_receipt_change);
@@ -1346,6 +1481,10 @@ declare
   v_body text;
   v_hash text;
   v_size bigint;
+  v_metadata jsonb;
+  v_content text;
+  v_content_hash text;
+  v_content_size bigint;
 begin
   if p_ref is null or jsonb_typeof(p_ref) <> 'object' then
     raise exception using errcode = '22023', message = 'SUPABASH_INVALID_REVISION_REFERENCE';
@@ -1362,18 +1501,27 @@ begin
     loop
       if jsonb_typeof(v_document) <> 'object'
         or jsonb_typeof(v_document -> 'body') <> 'string'
+        or jsonb_typeof(v_document -> 'bodyByteSize') <> 'number'
         or jsonb_typeof(v_document -> 'byteSize') <> 'number'
+        or not coalesce(supabash.is_document_metadata(v_document -> 'metadata'), false)
       then
         raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
       end if;
       v_path := v_document ->> 'path';
       v_body := v_document ->> 'body';
-      v_hash := coalesce(v_document ->> 'contentHash', v_document ->> 'bodyHash');
-      v_size := (v_document ->> 'byteSize')::bigint;
+      v_hash := v_document ->> 'bodyHash';
+      v_size := (v_document ->> 'bodyByteSize')::bigint;
+      v_metadata := v_document -> 'metadata';
+      v_content := supabash.render_document(v_body, v_metadata);
+      v_content_hash := v_document ->> 'contentHash';
+      v_content_size := (v_document ->> 'byteSize')::bigint;
       if not coalesce(supabash.is_document_path(v_path), false)
         or v_hash !~ '^[0-9a-f]{64}$'
         or v_hash <> supabash.sha256_text(v_body)
         or v_size <> octet_length(v_body)
+        or v_content_hash !~ '^[0-9a-f]{64}$'
+        or v_content_hash <> supabash.sha256_text(v_content)
+        or v_content_size <> octet_length(v_content)
       then
         raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
       end if;
@@ -1390,7 +1538,10 @@ begin
         select jsonb_agg(jsonb_build_object(
           'path', document ->> 'path',
           'body', document ->> 'body',
-          'bodyHash', coalesce(document ->> 'contentHash', document ->> 'bodyHash'),
+          'bodyHash', document ->> 'bodyHash',
+          'bodyByteSize', (document ->> 'bodyByteSize')::bigint,
+          'metadata', document -> 'metadata',
+          'contentHash', document ->> 'contentHash',
           'byteSize', (document ->> 'byteSize')::bigint
         ) order by document ->> 'path')
         from jsonb_array_elements(p_staged_documents) document
@@ -1469,12 +1620,32 @@ begin
   v_from := supabash.resolve_diff_ref(p_workspace_id, p_from, p_staged_documents);
   v_to := supabash.resolve_diff_ref(p_workspace_id, p_to, p_staged_documents);
 
-  with before_documents as (
+  with before_stored as (
     select * from jsonb_to_recordset(v_from -> 'documents')
-      as document(path text, body text, "bodyHash" text, "byteSize" bigint)
-  ), after_documents as (
+      as document(
+        path text, body text, "bodyHash" text, "bodyByteSize" bigint,
+        metadata jsonb, "contentHash" text, "byteSize" bigint
+      )
+  ), before_documents as (
+    select
+      path,
+      supabash.render_document(body, metadata) as body,
+      "contentHash" as "bodyHash",
+      "byteSize"
+    from before_stored
+  ), after_stored as (
     select * from jsonb_to_recordset(v_to -> 'documents')
-      as document(path text, body text, "bodyHash" text, "byteSize" bigint)
+      as document(
+        path text, body text, "bodyHash" text, "bodyByteSize" bigint,
+        metadata jsonb, "contentHash" text, "byteSize" bigint
+      )
+  ), after_documents as (
+    select
+      path,
+      supabash.render_document(body, metadata) as body,
+      "contentHash" as "bodyHash",
+      "byteSize"
+    from after_stored
   ), changed as (
     select
       coalesce(a.path, b.path) as path,

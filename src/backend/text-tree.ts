@@ -1,4 +1,5 @@
 import type { CommitReceipt } from '../api/contracts.js';
+import type { TextDocumentCodec } from '../api/document-codec.js';
 import { SupabashError } from '../api/errors.js';
 import type { ReadonlyWorkspaceView, RevisionEntry } from '../api/history.js';
 import { normalizeVirtualPath } from '../core/path.js';
@@ -6,7 +7,7 @@ import { isRuntimeOwnedPath } from '../core/runtime-paths.js';
 import type { RemoteEntry } from '../core/storage.js';
 import { TrackedFileSystem } from '../core/tracked-file-system.js';
 import { prepareUpload } from '../core/workspace-changes.js';
-import type { PinnedSnapshot } from './contracts.js';
+import type { BackendDocument, PinnedSnapshot } from './contracts.js';
 
 export const TEXT_FILE_MODE = 0o644;
 const textEncoder = new TextEncoder();
@@ -14,26 +15,14 @@ const textDecoder = new TextDecoder('utf-8', { fatal: true });
 
 export const snapshotFromFileSystem = async (
   fs: TrackedFileSystem,
+  documentCodec: TextDocumentCodec,
   receipt?: CommitReceipt,
 ): Promise<PinnedSnapshot> => {
   const documents = [];
   for (const path of fs.getAllPaths().toSorted()) {
     if (!isRuntimeOwnedPath(path) && fs.kindOf(path) === 'file') {
-      const body = await fs.readFileBuffer(path);
-      const text = decodeText(body, path);
-      const upload = await prepareUpload({
-        body,
-        kind: 'file',
-        mode: TEXT_FILE_MODE,
-        modifiedAt: receipt?.committedAt ?? new Date(0),
-        path,
-      });
-      documents.push({
-        body: text,
-        byteSize: body.byteLength,
-        contentHash: requireHash(upload.contentHash, path),
-        path,
-      });
+      const content = decodeText(await fs.readFileBuffer(path), path);
+      documents.push(await documentFromContent(path, content, documentCodec));
     }
   }
   return {
@@ -93,7 +82,7 @@ export const bodyLoader = (
 };
 
 const snapshotBodyMap = (snapshot: PinnedSnapshot): Map<string, Uint8Array> =>
-  new Map(snapshot.documents.map(({ body, path }) => [path, textEncoder.encode(body)]));
+  new Map(snapshot.documents.map(({ content, path }) => [path, textEncoder.encode(content)]));
 
 const loadSnapshotBody = (
   bodies: ReadonlyMap<string, Uint8Array>,
@@ -129,7 +118,7 @@ export const readonlyView = (
           path: normalized,
         });
       }
-      return document.body;
+      return document.content;
     }),
   revision,
 });
@@ -163,6 +152,49 @@ export const snapshotDetails = (
   documentCount: snapshot.documents.length,
   totalUtf8Bytes: snapshot.documents.reduce((total, document) => total + document.byteSize, 0),
 });
+
+export const documentFromContent = async (
+  path: string,
+  content: string,
+  documentCodec: TextDocumentCodec,
+): Promise<BackendDocument> => {
+  const parsed = documentCodec.parse(path, content);
+  if (parsed.path !== path || parsed.body.includes('\0')) {
+    throw unsupported(path, 'Document codec returned an invalid stored document.');
+  }
+  const canonical = documentCodec.render(parsed);
+  if (canonical.includes('\0')) {
+    throw unsupported(path, 'Document codec returned invalid UTF-8 text content.');
+  }
+  const bodyBytes = textEncoder.encode(parsed.body);
+  const contentBytes = textEncoder.encode(canonical);
+  const [bodyUpload, contentUpload] = await Promise.all([
+    prepareUpload({
+      body: bodyBytes,
+      kind: 'file',
+      mode: TEXT_FILE_MODE,
+      modifiedAt: new Date(0),
+      path,
+    }),
+    prepareUpload({
+      body: contentBytes,
+      kind: 'file',
+      mode: TEXT_FILE_MODE,
+      modifiedAt: new Date(0),
+      path,
+    }),
+  ]);
+  return {
+    body: parsed.body,
+    bodyByteSize: bodyBytes.byteLength,
+    bodyHash: requireHash(bodyUpload.contentHash, path),
+    byteSize: contentBytes.byteLength,
+    content: canonical,
+    contentHash: requireHash(contentUpload.contentHash, path),
+    metadata: parsed.metadata,
+    path,
+  };
+};
 
 export const unsupported = (path: string, message: string): SupabashError =>
   new SupabashError('UNSUPPORTED_CONTENT', message, { path });

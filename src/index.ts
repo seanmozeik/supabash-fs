@@ -10,6 +10,10 @@ import {
   POSTGRES_CAPABILITY_SCHEMA_VERSION as postgresCapabilitySchemaVersion,
 } from './api/capability.js';
 import { HISTORY_SCHEMA_VERSION as historySchemaVersion } from './api/commit.js';
+import {
+  createYamlFrontmatterCodec as yamlFrontmatterCodec,
+  plainTextDocumentCodec as textDocumentCodec,
+} from './api/document-codec.js';
 import { POSTGRES_WORKSPACE_CAPABILITIES as postgresWorkspaceCapabilities } from './api/postgres.js';
 import { Supabash as openWorkspace, SupabashError as WorkspaceError } from './api/supabash.js';
 import { createDelegatedCapability as signDelegatedCapability } from './capability/create.js';
@@ -60,6 +64,13 @@ export type {
   WorkspaceChangeKind,
   WorkspaceEntryKind,
 } from './api/contracts.js';
+export type {
+  DocumentMetadata,
+  DocumentMetadataValue,
+  StoredTextDocument,
+  TextDocumentCodec,
+  YamlFrontmatterCodecOptions,
+} from './api/document-codec.js';
 export type {
   WorkspaceObservability,
   WorkspaceOperation,
@@ -149,3 +160,5 @@ export const createCommandPolicy = createWorkspaceCommandPolicy;
 export const createDelegatedCapability = signDelegatedCapability;
 export const verifyDelegatedCapability = checkDelegatedCapability;
 export const verifyPostgresDelegatedCapability = checkPostgresDelegatedCapability;
+export const createYamlFrontmatterCodec = yamlFrontmatterCodec;
+export const plainTextDocumentCodec = textDocumentCodec;

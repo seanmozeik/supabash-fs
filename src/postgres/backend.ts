@@ -1,3 +1,4 @@
+import { plainTextDocumentCodec, type TextDocumentCodec } from '../api/document-codec.js';
 import { SupabashError } from '../api/errors.js';
 import type {
   CheckpointOptions,
@@ -47,6 +48,7 @@ const RPC = Object.freeze({
 export interface PostgresBackendOptions {
   readonly client: PostgresRpcClient;
   readonly delegatedGrant?: string;
+  readonly documentCodec?: TextDocumentCodec;
   readonly observability?: WorkspaceObservability;
   readonly workspace: string;
 }
@@ -58,6 +60,7 @@ export const createPostgresBackend = (options: PostgresBackendOptions): Workspac
 
 class PostgresBackend implements WorkspaceBackend {
   readonly capabilities = POSTGRES_WORKSPACE_CAPABILITIES;
+  readonly documentCodec: TextDocumentCodec;
   private readonly client: PostgresRpcClient;
   private readonly delegatedGrant: string | undefined;
   private readonly observability: WorkspaceObservability | undefined;
@@ -65,6 +68,7 @@ class PostgresBackend implements WorkspaceBackend {
 
   constructor(options: PostgresBackendOptions) {
     this.client = options.client;
+    this.documentCodec = options.documentCodec ?? plainTextDocumentCodec;
     this.delegatedGrant = options.delegatedGrant;
     this.workspace = options.workspace;
     this.observability = options.observability;
@@ -161,7 +165,7 @@ class PostgresBackend implements WorkspaceBackend {
       RPC.loadRevision,
       { p_revision_id: revision, p_workspace_id: this.workspace },
       'revision-load',
-      decodeSnapshot,
+      (value) => decodeSnapshot(value, this.documentCodec),
     );
   }
 
@@ -170,7 +174,7 @@ class PostgresBackend implements WorkspaceBackend {
       RPC.loadWorkspace,
       { p_workspace_id: this.workspace },
       'snapshot-load',
-      decodeSnapshot,
+      (value) => decodeSnapshot(value, this.documentCodec),
     );
   }
 

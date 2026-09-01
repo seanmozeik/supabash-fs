@@ -1,5 +1,6 @@
 import type { CommitOptions } from '../api/commit.js';
 import type { CommitReceipt, WorkspaceChange } from '../api/contracts.js';
+import type { TextDocumentCodec } from '../api/document-codec.js';
 import { SupabashError } from '../api/errors.js';
 import type {
   CheckpointOptions,
@@ -47,10 +48,10 @@ import type {
 import {
   bodyLoader,
   decodeText,
+  documentFromContent,
   entriesFrom,
   projectSnapshot,
   readonlyView,
-  requireHash,
   requireRevision,
   snapshotDetails,
   snapshotFromFileSystem,
@@ -90,6 +91,7 @@ class BackendWorkspace implements PostgresWorkspace {
   readonly capabilities;
   readonly fs: TrackedFileSystem;
   private readonly backend: WorkspaceBackend;
+  private readonly documentCodec: TextDocumentCodec;
   private readonly limits: WorkspaceLimits;
   private readonly replaceSnapshotBodies: TextTreeProjection['replaceSnapshotBodies'];
   private restoreSourceRevision: string | undefined;
@@ -105,6 +107,7 @@ class BackendWorkspace implements PostgresWorkspace {
       throw new SupabashError('STORAGE', 'The text workspace requires a Postgres backend.');
     }
     this.backend = backend;
+    this.documentCodec = backend.documentCodec;
     this.capabilities = POSTGRES_WORKSPACE_CAPABILITIES;
     this.fs = projection.filesystem;
     this.replaceSnapshotBodies = projection.replaceSnapshotBodies;
@@ -129,7 +132,7 @@ class BackendWorkspace implements PostgresWorkspace {
     const context = resolvedCommitContext(options.context, this.restoreSourceRevision);
     this.fs.beginCommit();
     try {
-      const prepared = await prepareChanges(this.fs, pending);
+      const prepared = await prepareChanges(this.fs, pending, this.documentCodec);
       const changes = committedWorkspaceChanges(
         pending,
         prepared.uploads,
@@ -154,7 +157,7 @@ class BackendWorkspace implements PostgresWorkspace {
         }),
         transactionId: crypto.randomUUID(),
       });
-      this.snapshot = await snapshotFromFileSystem(this.fs, result.receipt);
+      this.snapshot = await snapshotFromFileSystem(this.fs, this.documentCodec, result.receipt);
       this.replaceSnapshotBodies(this.snapshot);
       await this.fs.finishCommit(entriesFrom(this.snapshot));
       this.restoreSourceRevision = undefined;
@@ -175,7 +178,7 @@ class BackendWorkspace implements PostgresWorkspace {
   }
 
   diff(input: RevisionDiffInput): Promise<RevisionDiff> {
-    return snapshotFromFileSystem(this.fs).then((staged) =>
+    return snapshotFromFileSystem(this.fs, this.documentCodec).then((staged) =>
       this.backend.diff(
         { ...input, previewBytes: diffPreviewLimit(input.previewBytes, this.limits) },
         staged,
@@ -222,6 +225,7 @@ interface PreparedChanges {
 const prepareChanges = async (
   fs: TrackedFileSystem,
   pending: PendingChanges,
+  documentCodec: TextDocumentCodec,
 ): Promise<PreparedChanges> => {
   const uploads: UploadEntry[] = [];
   const documents = new Map<string, BackendDocument>();
@@ -236,15 +240,12 @@ const prepareChanges = async (
     if (draft.mode !== TEXT_FILE_MODE) {
       throw unsupported(path, 'File modes are not supported by the UTF-8 text backend.');
     }
-    const body = decodeText(draft.body ?? new Uint8Array(), path);
-    const upload = await prepareUpload(draft);
+    const content = decodeText(draft.body ?? new Uint8Array(), path);
+    const document = await documentFromContent(path, content, documentCodec);
+    const canonicalBody = new TextEncoder().encode(document.content);
+    const upload = await prepareUpload({ ...draft, body: canonicalBody });
     uploads.push(upload);
-    documents.set(path, {
-      body,
-      byteSize: upload.body?.byteLength ?? 0,
-      contentHash: requireHash(upload.contentHash, path),
-      path,
-    });
+    documents.set(path, document);
   }
   return { documents, uploads };
 };
@@ -267,8 +268,11 @@ const mutationsFrom = (
         path: to,
         ...(changed && {
           body: document.body,
-          bodyHash: document.contentHash,
+          bodyByteSize: document.bodyByteSize,
+          bodyHash: document.bodyHash,
           byteSize: document.byteSize,
+          contentHash: document.contentHash,
+          metadata: document.metadata,
         }),
       };
     }),
@@ -277,11 +281,14 @@ const mutationsFrom = (
       .map(({ path }) => ({ kind: 'delete' as const, path })),
     ...[...prepared.documents.values()]
       .filter(({ path }) => !movedTo.has(path))
-      .map(({ body, byteSize, contentHash, path }) => ({
+      .map(({ body, bodyByteSize, bodyHash, byteSize, contentHash, metadata, path }) => ({
         body,
+        bodyByteSize,
+        bodyHash,
         byteSize,
         contentHash,
         kind: 'upsert' as const,
+        metadata,
         path,
       })),
   ].toSorted((left, right) => comparePaths(left.path, right.path));
