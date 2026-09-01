@@ -8,7 +8,13 @@ import {
   isNetworkCommand,
   isWrapperCommand,
 } from './commands.js';
-import { pipelineDepth, isFlag, type CommandSegment } from './segments.js';
+import {
+  isFlag,
+  pipelineDepth,
+  segmentFromWords,
+  type CommandSegment,
+  type CommandWord,
+} from './segments.js';
 import {
   DEFAULT_MAX_COMMAND_LENGTH,
   DEFAULT_MAX_PIPELINE_DEPTH,
@@ -100,7 +106,7 @@ const evaluateSegment = async (
   depth: number,
 ): Promise<CommandInspectDecision> => {
   const { head } = segment;
-  if (head === '') {
+  if (head === '' || segment.words[0]?.kind === 'dynamic') {
     return denyPolicy('unsupported-syntax', 'Command segment is missing a command name.');
   }
   if (extraDeny.has(head) || isDangerousCommand(head)) {
@@ -132,47 +138,49 @@ const evaluateSegment = async (
 const unwrapSegment = (
   segment: CommandSegment,
 ): { ok: true; segment: CommandSegment } | { ok: false; decision: CommandInspectDecision } => {
-  const tokens = [...segment.tokens];
+  const words = [...segment.words];
   let guard = 0;
-  while (tokens[0] !== undefined && isWrapperCommand(tokens[0]) && guard < WRAPPER_LIMIT) {
-    const wrapper = tokens.shift();
-    skipWrapperArgs(tokens, wrapper ?? '');
+  while (
+    words[0]?.kind === 'literal' &&
+    isWrapperCommand(words[0].value) &&
+    guard < WRAPPER_LIMIT
+  ) {
+    const wrapper = words.shift()?.value ?? '';
+    skipWrapperWords(words, wrapper);
     guard += 1;
   }
-  if (tokens[0] === undefined) {
+  const [head] = words;
+  if (head === undefined) {
     return {
       decision: denyPolicy('unsupported-syntax', 'Wrapper command is missing a target command.'),
       ok: false,
     };
   }
-  if (tokens[0] === segment.head) {
+  if (head.kind === 'dynamic') {
+    return {
+      decision: denyPolicy('unsupported-syntax', 'Wrapper command is missing a target command.'),
+      ok: false,
+    };
+  }
+  if (head.value === segment.head) {
     return { ok: true, segment };
   }
-  return {
-    ok: true,
-    segment: {
-      ...segment,
-      args: tokens.slice(1).filter((token) => !isFlag(token) && token !== '--'),
-      flags: tokens.filter((token, index) => index > 0 && isFlag(token)),
-      head: tokens[0],
-      tokens,
-    },
-  };
+  return { ok: true, segment: segmentFromWords(words, segment.redirects, segment.joiner) };
 };
 
-const skipWrapperArgs = (tokens: string[], wrapper: string): void => {
-  while (tokens[0] !== undefined && isFlag(tokens[0])) {
-    const flag = tokens.shift();
+const skipWrapperWords = (words: CommandWord[], wrapper: string): void => {
+  while (words[0] !== undefined && isFlag(words[0].value)) {
+    const flag = words.shift()?.value;
     if ((wrapper === 'timeout' && (flag === '-s' || flag === '--signal')) || flag === '--') {
-      tokens.shift();
+      words.shift();
     }
   }
-  if (wrapper === 'timeout' && tokens[0] !== undefined && /^\d/u.test(tokens[0])) {
-    tokens.shift();
+  if (wrapper === 'timeout' && words[0] !== undefined && /^\d/u.test(words[0].value)) {
+    words.shift();
   }
   if (wrapper === 'env') {
-    while (tokens[0]?.includes('=') === true) {
-      tokens.shift();
+    while (words[0]?.value.includes('=') === true) {
+      words.shift();
     }
   }
 };
@@ -183,10 +191,13 @@ const nestedShell = (
   if (segment.head !== 'bash' && segment.head !== 'sh') {
     return undefined;
   }
-  const scriptIndex = segment.tokens.indexOf('-c');
+  const scriptIndex = segment.words.findIndex((word) => word.value === '-c');
   if (scriptIndex === -1) {
     return undefined;
   }
-  const script = segment.tokens[scriptIndex + 1];
-  return script === undefined ? { missing: true } : { script };
+  const script = segment.words[scriptIndex + 1];
+  if (script === undefined || script.kind === 'dynamic') {
+    return { missing: true };
+  }
+  return { script: script.value };
 };

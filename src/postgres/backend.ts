@@ -165,7 +165,7 @@ class PostgresBackend implements WorkspaceBackend {
       RPC.loadRevision,
       { p_revision_id: revision, p_workspace_id: this.workspace },
       'revision-load',
-      (value) => decodeSnapshot(value, this.documentCodec),
+      decodeSnapshot,
     );
   }
 
@@ -174,7 +174,7 @@ class PostgresBackend implements WorkspaceBackend {
       RPC.loadWorkspace,
       { p_workspace_id: this.workspace },
       'snapshot-load',
-      (value) => decodeSnapshot(value, this.documentCodec),
+      decodeSnapshot,
     );
   }
 

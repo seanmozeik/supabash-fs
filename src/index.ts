@@ -13,6 +13,7 @@ import { HISTORY_SCHEMA_VERSION as historySchemaVersion } from './api/commit.js'
 import {
   createYamlFrontmatterCodec as yamlFrontmatterCodec,
   plainTextDocumentCodec as textDocumentCodec,
+  renderStoredDocument as renderWorkspaceDocument,
 } from './api/document-codec.js';
 import { POSTGRES_WORKSPACE_CAPABILITIES as postgresWorkspaceCapabilities } from './api/postgres.js';
 import { Supabash as openWorkspace, SupabashError as WorkspaceError } from './api/supabash.js';
@@ -162,3 +163,4 @@ export const verifyDelegatedCapability = checkDelegatedCapability;
 export const verifyPostgresDelegatedCapability = checkPostgresDelegatedCapability;
 export const createYamlFrontmatterCodec = yamlFrontmatterCodec;
 export const plainTextDocumentCodec = textDocumentCodec;
+export const renderStoredDocument = renderWorkspaceDocument;

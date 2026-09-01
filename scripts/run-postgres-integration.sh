@@ -21,7 +21,30 @@ readonly edge_cache_volume="${SUPABASH_TEST_EDGE_CACHE_VOLUME:-supabash-postgres
 readonly edge_port="${SUPABASH_TEST_EDGE_PORT:-55432}"
 readonly edge_image="${SUPABASH_TEST_EDGE_IMAGE:-public.ecr.aws/supabase/edge-runtime:v1.74.2}"
 readonly deno_image="${SUPABASH_TEST_DENO_IMAGE:-denoland/deno:2.1.4}"
-readonly run_id="${SUPABASH_TEST_RUN_ID:-$(tr -d '-' </proc/sys/kernel/random/uuid)}"
+
+generate_run_id() {
+  local id=""
+  if [[ -n "${SUPABASH_TEST_RUN_ID:-}" ]]; then
+    printf '%s\n' "$SUPABASH_TEST_RUN_ID"
+    return 0
+  fi
+  if [[ -r /proc/sys/kernel/random/uuid ]]; then
+    id="$(tr -d '-' </proc/sys/kernel/random/uuid)"
+  elif command -v uuidgen >/dev/null 2>&1; then
+    id="$(uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-')"
+  elif command -v python3 >/dev/null 2>&1; then
+    id="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+  elif command -v openssl >/dev/null 2>&1; then
+    id="$(openssl rand -hex 16)"
+  fi
+  if [[ -z "$id" ]]; then
+    printf 'Unable to generate SUPABASH_TEST_RUN_ID.\n' >&2
+    return 1
+  fi
+  printf '%s\n' "$id"
+}
+
+readonly run_id="$(generate_run_id)"
 readonly results_dir="${SUPABASH_TEST_RESULTS_DIR:-/tmp/supabash-postgres-integration-$run_id}"
 readonly cleanup_verifier="$repo_root/scripts/verify-postgres-cleanup.sh"
 

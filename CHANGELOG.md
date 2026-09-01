@@ -1,17 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 - Parse Bash with Unbash before policy evaluation. Inspect pipelines,
-  redirections, substitutions, literal variables, loops, conditionals, and
-  grouped commands without treating ordinary compound Bash as unsupported.
+  redirections, substitutions, literal variables, loops, conditionals,
+  functions, heredocs, and grouped commands without treating ordinary compound
+  Bash as unsupported. Unresolved words stay dynamic and fail closed.
 - Keep command policy as a damage limiter. Workspace scoping and backend
   authorization remain the security boundary.
-- Add a Postgres text-document codec contract and a YAML-frontmatter codec.
-  Persist the UTF-8 body and flat scalar metadata separately while projecting
-  one canonical Markdown file into Just Bash.
+- Add a Postgres text-document codec contract and a YAML-frontmatter parser.
+  Persist the UTF-8 body and flat scalar metadata separately. One canonical
+  renderer, shared with SQL, projects the Markdown file into Just Bash.
 - Include document metadata in immutable revision manifests, visible content
   hashes, diffs, historical reads, moves, restore, and atomic commits.
+- Generate a portable `SUPABASH_TEST_RUN_ID` for live Postgres tests on macOS.
+- Let hosts register explicit Just Bash commands through the AI SDK adapter.
+  Custom commands keep normal pipes, redirections, compound syntax, workspace
+  scoping, execution deadlines, and command-policy inspection.
 
 ## 0.3.0
 

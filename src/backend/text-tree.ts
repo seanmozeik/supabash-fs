@@ -1,5 +1,5 @@
 import type { CommitReceipt } from '../api/contracts.js';
-import type { TextDocumentCodec } from '../api/document-codec.js';
+import { renderStoredDocument, type TextDocumentCodec } from '../api/document-codec.js';
 import { SupabashError } from '../api/errors.js';
 import type { ReadonlyWorkspaceView, RevisionEntry } from '../api/history.js';
 import { normalizeVirtualPath } from '../core/path.js';
@@ -162,7 +162,7 @@ export const documentFromContent = async (
   if (parsed.path !== path || parsed.body.includes('\0')) {
     throw unsupported(path, 'Document codec returned an invalid stored document.');
   }
-  const canonical = documentCodec.render(parsed);
+  const canonical = renderStoredDocument(parsed);
   if (canonical.includes('\0')) {
     throw unsupported(path, 'Document codec returned invalid UTF-8 text content.');
   }

@@ -57,6 +57,12 @@ const proveDocumentCodec = async (context: LiveContext, accessToken: string): Pr
   const seed = await workspace.commit({
     context: { actor: 'codec-seed', correlationId: `${context.runId}-codec-seed` },
   });
+  const projected = await context.open(accessToken, workspaceId);
+  assert(
+    (await projected.fs.readFile('/pacing.md')) ===
+      '---\ndescription: "How demanding work affects recovery"\n---\n# Pacing\n\nProtect recovery.\n',
+    'YAML metadata did not project through the shared renderer without the write codec.',
+  );
   const reopened = await context.open(accessToken, workspaceId, codec);
   assert(
     (await reopened.fs.readFile('/pacing.md')) ===

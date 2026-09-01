@@ -131,6 +131,69 @@ as $function$
   end;
 $function$;
 
+create function supabash.decode_stored_document(p_document jsonb)
+returns table (
+  body text,
+  body_hash text,
+  body_byte_size bigint,
+  metadata jsonb,
+  content text,
+  content_hash text,
+  content_byte_size bigint
+)
+language plpgsql
+immutable
+parallel safe
+set search_path = pg_catalog, supabash
+as $function$
+declare
+  v_body text;
+  v_body_hash text;
+  v_body_byte_size bigint;
+  v_metadata jsonb;
+  v_content text;
+  v_content_hash text;
+  v_content_byte_size bigint;
+begin
+  if p_document is null
+    or jsonb_typeof(p_document) <> 'object'
+    or not (p_document ?& array[
+      'body', 'bodyByteSize', 'bodyHash', 'byteSize', 'contentHash', 'metadata'
+    ])
+    or jsonb_typeof(p_document -> 'body') <> 'string'
+    or jsonb_typeof(p_document -> 'bodyByteSize') <> 'number'
+    or jsonb_typeof(p_document -> 'byteSize') <> 'number'
+    or (p_document ->> 'bodyHash') !~ '^[0-9a-f]{64}$'
+    or (p_document ->> 'contentHash') !~ '^[0-9a-f]{64}$'
+    or not coalesce(supabash.is_document_metadata(p_document -> 'metadata'), false)
+  then
+    raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
+  end if;
+  v_body := p_document ->> 'body';
+  v_body_hash := supabash.sha256_text(v_body);
+  v_body_byte_size := octet_length(v_body);
+  v_metadata := p_document -> 'metadata';
+  v_content := supabash.render_document(v_body, v_metadata);
+  v_content_hash := supabash.sha256_text(v_content);
+  v_content_byte_size := octet_length(v_content);
+  if (p_document ->> 'bodyByteSize')::bigint <> v_body_byte_size
+    or p_document ->> 'bodyHash' <> v_body_hash
+    or (p_document ->> 'byteSize')::bigint <> v_content_byte_size
+    or p_document ->> 'contentHash' <> v_content_hash
+  then
+    raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
+  end if;
+  body := v_body;
+  body_hash := v_body_hash;
+  body_byte_size := v_body_byte_size;
+  metadata := v_metadata;
+  content := v_content;
+  content_hash := v_content_hash;
+  content_byte_size := v_content_byte_size;
+  return next;
+end
+$function$;
+
 create function supabash.base64url_decode(p_value text)
 returns bytea
 language plpgsql
@@ -960,32 +1023,7 @@ begin
       raise exception using errcode = '22023', message = 'SUPABASH_INVALID_PATH';
     end if;
     if v_kind = 'upsert' then
-      if not (v_change ?& array[
-          'body', 'bodyByteSize', 'bodyHash', 'byteSize', 'contentHash', 'metadata'
-        ])
-        or jsonb_typeof(v_change -> 'body') <> 'string'
-        or jsonb_typeof(v_change -> 'bodyByteSize') <> 'number'
-        or jsonb_typeof(v_change -> 'byteSize') <> 'number'
-        or (v_change ->> 'bodyHash') !~ '^[0-9a-f]{64}$'
-        or (v_change ->> 'contentHash') !~ '^[0-9a-f]{64}$'
-        or not coalesce(supabash.is_document_metadata(v_change -> 'metadata'), false)
-      then
-        raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
-      end if;
-      v_body := v_change ->> 'body';
-      v_hash := supabash.sha256_text(v_body);
-      v_size := octet_length(v_body);
-      v_metadata := v_change -> 'metadata';
-      v_content := supabash.render_document(v_body, v_metadata);
-      v_content_hash := supabash.sha256_text(v_content);
-      v_content_size := octet_length(v_content);
-      if (v_change ->> 'bodyByteSize')::bigint <> v_size
-        or v_change ->> 'bodyHash' <> v_hash
-        or (v_change ->> 'byteSize')::bigint <> v_content_size
-        or v_change ->> 'contentHash' <> v_content_hash
-      then
-        raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
-      end if;
+      perform * from supabash.decode_stored_document(v_change);
     elsif v_kind = 'move' then
       v_from := v_change ->> 'from';
       if not coalesce(supabash.is_document_path(v_from), false) or v_from = v_path then
@@ -994,32 +1032,7 @@ begin
       if (v_change ? 'body') or (v_change ? 'bodyByteSize') or (v_change ? 'bodyHash')
         or (v_change ? 'byteSize') or (v_change ? 'contentHash') or (v_change ? 'metadata')
       then
-        if not (v_change ?& array[
-            'body', 'bodyByteSize', 'bodyHash', 'byteSize', 'contentHash', 'metadata'
-          ])
-          or jsonb_typeof(v_change -> 'body') <> 'string'
-          or jsonb_typeof(v_change -> 'bodyByteSize') <> 'number'
-          or jsonb_typeof(v_change -> 'byteSize') <> 'number'
-          or (v_change ->> 'bodyHash') !~ '^[0-9a-f]{64}$'
-          or (v_change ->> 'contentHash') !~ '^[0-9a-f]{64}$'
-          or not coalesce(supabash.is_document_metadata(v_change -> 'metadata'), false)
-        then
-          raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
-        end if;
-        v_body := v_change ->> 'body';
-        v_hash := supabash.sha256_text(v_body);
-        v_size := octet_length(v_body);
-        v_metadata := v_change -> 'metadata';
-        v_content := supabash.render_document(v_body, v_metadata);
-        v_content_hash := supabash.sha256_text(v_content);
-        v_content_size := octet_length(v_content);
-        if (v_change ->> 'bodyByteSize')::bigint <> v_size
-          or v_change ->> 'bodyHash' <> v_hash
-          or (v_change ->> 'byteSize')::bigint <> v_content_size
-          or v_change ->> 'contentHash' <> v_content_hash
-        then
-          raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
-        end if;
+        perform * from supabash.decode_stored_document(v_change);
       end if;
     end if;
   end loop;
@@ -1116,13 +1129,13 @@ begin
     where e.workspace_id = p_workspace_id and e.revision_id = v_revision and e.path = v_path;
 
     if v_kind = 'upsert' then
-      v_body := v_change ->> 'body';
-      v_hash := supabash.sha256_text(v_body);
-      v_size := octet_length(v_body);
-      v_metadata := v_change -> 'metadata';
-      v_content := supabash.render_document(v_body, v_metadata);
-      v_content_hash := supabash.sha256_text(v_content);
-      v_content_size := octet_length(v_content);
+      select
+        d.body, d.body_hash, d.body_byte_size, d.metadata,
+        d.content, d.content_hash, d.content_byte_size
+      into
+        v_body, v_hash, v_size, v_metadata,
+        v_content, v_content_hash, v_content_size
+      from supabash.decode_stored_document(v_change) d;
       insert into supabash.bodies (workspace_id, body_hash, body, byte_size)
       values (p_workspace_id, v_hash, v_body, v_size)
       on conflict (workspace_id, body_hash) do nothing;
@@ -1193,13 +1206,13 @@ begin
         raise exception using errcode = '22023', message = 'SUPABASH_INVALID_PATH';
       end if;
       if v_change ? 'body' then
-        v_body := v_change ->> 'body';
-        v_hash := supabash.sha256_text(v_body);
-        v_size := octet_length(v_body);
-        v_metadata := v_change -> 'metadata';
-        v_content := supabash.render_document(v_body, v_metadata);
-        v_content_hash := supabash.sha256_text(v_content);
-        v_content_size := octet_length(v_content);
+        select
+          d.body, d.body_hash, d.body_byte_size, d.metadata,
+          d.content, d.content_hash, d.content_byte_size
+        into
+          v_body, v_hash, v_size, v_metadata,
+          v_content, v_content_hash, v_content_size
+        from supabash.decode_stored_document(v_change) d;
         insert into supabash.bodies (workspace_id, body_hash, body, byte_size)
         values (p_workspace_id, v_hash, v_body, v_size)
         on conflict (workspace_id, body_hash) do nothing;
@@ -1499,32 +1512,11 @@ begin
     end if;
     for v_document in select value from jsonb_array_elements(p_staged_documents)
     loop
-      if jsonb_typeof(v_document) <> 'object'
-        or jsonb_typeof(v_document -> 'body') <> 'string'
-        or jsonb_typeof(v_document -> 'bodyByteSize') <> 'number'
-        or jsonb_typeof(v_document -> 'byteSize') <> 'number'
-        or not coalesce(supabash.is_document_metadata(v_document -> 'metadata'), false)
-      then
-        raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
-      end if;
       v_path := v_document ->> 'path';
-      v_body := v_document ->> 'body';
-      v_hash := v_document ->> 'bodyHash';
-      v_size := (v_document ->> 'bodyByteSize')::bigint;
-      v_metadata := v_document -> 'metadata';
-      v_content := supabash.render_document(v_body, v_metadata);
-      v_content_hash := v_document ->> 'contentHash';
-      v_content_size := (v_document ->> 'byteSize')::bigint;
-      if not coalesce(supabash.is_document_path(v_path), false)
-        or v_hash !~ '^[0-9a-f]{64}$'
-        or v_hash <> supabash.sha256_text(v_body)
-        or v_size <> octet_length(v_body)
-        or v_content_hash !~ '^[0-9a-f]{64}$'
-        or v_content_hash <> supabash.sha256_text(v_content)
-        or v_content_size <> octet_length(v_content)
-      then
+      if not coalesce(supabash.is_document_path(v_path), false) then
         raise exception using errcode = '22023', message = 'SUPABASH_UNSUPPORTED_CONTENT';
       end if;
+      perform * from supabash.decode_stored_document(v_document);
     end loop;
     if (
       select count(*) <> count(distinct document ->> 'path')

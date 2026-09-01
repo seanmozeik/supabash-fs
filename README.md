@@ -229,10 +229,11 @@ if (patched.status !== 'completed') {
 }
 ```
 
-An optional document codec can separate agent-visible YAML frontmatter from
-the stored text body. The built-in codec accepts one flat mapping of string,
-number, boolean, or null values. It renders deterministic YAML when the
-workspace opens, so metadata changes participate in the same revision, diff,
+An optional document codec can parse agent-visible YAML frontmatter into a
+stored text body plus one flat mapping of string, number, boolean, or null
+values. Postgres and the client share one canonical renderer for that stored
+shape. Opening the same workspace without a codec still projects the same
+YAML file, so metadata changes participate in the same revision, diff,
 checkpoint, and restore history as body changes.
 
 ```ts
@@ -320,6 +321,25 @@ integer to change it.
 
 This package does not compact model context. Context management belongs to the
 AI runtime.
+
+Hosts can add normal Just Bash commands with `bash.customCommands`. Add each
+command name to `bash.policyOptions.extraAllowCommands` so the command policy
+can inspect pipelines and compound syntax before Just Bash runs it:
+
+```ts
+import { defineCommand } from 'just-bash/browser';
+
+const count = defineCommand('count', async (_args, context) => ({
+  exitCode: 0,
+  stderr: '',
+  stdout: String(context.stdin.length),
+}));
+
+await createTools({
+  workspace,
+  bash: { customCommands: [count], policyOptions: { extraAllowCommands: ['count'] } },
+});
+```
 
 ## Command policy
 

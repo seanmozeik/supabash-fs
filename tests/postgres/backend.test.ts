@@ -55,12 +55,11 @@ describe('postgres backend', () => {
         data: {
           ...snapshot(),
           documents: [
-            {
-              body: '',
-              bodyHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-              byteSize: 0,
-              path: '/empty.md',
-            },
+            storedDocument(
+              '/empty.md',
+              '',
+              'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+            ),
           ],
         },
         error: null,
@@ -96,11 +95,7 @@ describe('postgres backend', () => {
         error: null,
       }),
     );
-    const backend = createPostgresBackend({
-      client: { rpc },
-      documentCodec: createYamlFrontmatterCodec(),
-      workspace,
-    });
+    const backend = createPostgresBackend({ client: { rpc }, workspace });
     const opened = await createBackendWorkspace(backend);
 
     await expect(opened.fs.readFile('/pacing.md')).resolves.toBe(content);
@@ -271,9 +266,22 @@ describe('postgres backend', () => {
 
 const emptySnapshot = () => ({ documents: [], headRevision: null });
 
+const storedDocument = (path: string, body: string, hash: string) => {
+  const byteSize = new TextEncoder().encode(body).byteLength;
+  return {
+    body,
+    bodyByteSize: byteSize,
+    bodyHash: hash,
+    byteSize,
+    contentHash: hash,
+    metadata: {},
+    path,
+  };
+};
+
 const snapshot = () => ({
   committedAt: '2026-08-28T18:00:00.000Z',
-  documents: [{ body: 'héllo\n', bodyHash: 'a'.repeat(64), byteSize: 7, path: '/notes/a.md' }],
+  documents: [storedDocument('/notes/a.md', 'héllo\n', 'a'.repeat(64))],
   headRevision: '223e4567-e89b-42d3-a456-426614174000',
   transactionId: '323e4567-e89b-42d3-a456-426614174000',
 });
@@ -281,7 +289,7 @@ const snapshot = () => ({
 const overwriteSnapshot = () => ({
   ...snapshot(),
   documents: [
-    { body: 'destination\n', bodyHash: 'c'.repeat(64), byteSize: 12, path: '/destination.md' },
-    { body: 'source\n', bodyHash: 'b'.repeat(64), byteSize: 7, path: '/source.md' },
+    storedDocument('/destination.md', 'destination\n', 'c'.repeat(64)),
+    storedDocument('/source.md', 'source\n', 'b'.repeat(64)),
   ],
 });

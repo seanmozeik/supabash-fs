@@ -13,7 +13,6 @@ export interface StoredTextDocument {
 
 export interface TextDocumentCodec {
   readonly parse: (path: string, content: string) => StoredTextDocument;
-  readonly render: (document: StoredTextDocument) => string;
 }
 
 export interface YamlFrontmatterCodecOptions {
@@ -22,7 +21,6 @@ export interface YamlFrontmatterCodecOptions {
 
 export const plainTextDocumentCodec: TextDocumentCodec = Object.freeze({
   parse: (path: string, content: string) => ({ body: content, metadata: {}, path }),
-  render: (document: StoredTextDocument) => document.body,
 });
 
 export const createYamlFrontmatterCodec = (
@@ -33,8 +31,25 @@ export const createYamlFrontmatterCodec = (
     options.validate?.(parsed.metadata, path);
     return { ...parsed, path };
   },
-  render: renderFrontmatter,
 });
+
+export const isDocumentMetadataValue = (value: unknown): value is DocumentMetadataValue =>
+  value === null ||
+  typeof value === 'string' ||
+  typeof value === 'boolean' ||
+  (typeof value === 'number' && Number.isFinite(value));
+
+export const renderStoredDocument = ({
+  body,
+  metadata,
+}: Pick<StoredTextDocument, 'body' | 'metadata'>): string => {
+  const entries = Object.entries(metadata).toSorted(([left], [right]) => compareKeys(left, right));
+  if (entries.length === 0) {
+    return body;
+  }
+  const fields = entries.map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n');
+  return `---\n${fields}\n---\n${body}`;
+};
 
 const parseFrontmatter = (
   path: string,
@@ -66,28 +81,13 @@ const metadataRecord = (value: unknown, path: string): DocumentMetadata => {
   }
   const metadata: Record<string, DocumentMetadataValue> = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (!/^[A-Za-z_][A-Za-z0-9_-]*$/u.test(key) || !isMetadataValue(entry)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_-]*$/u.test(key) || !isDocumentMetadataValue(entry)) {
       throw unsupported(path, 'YAML frontmatter keys and values are not supported.');
     }
     metadata[key] = entry;
   }
   return metadata;
 };
-
-const renderFrontmatter = ({ body, metadata }: StoredTextDocument): string => {
-  const entries = Object.entries(metadata).toSorted(([left], [right]) => compareKeys(left, right));
-  if (entries.length === 0) {
-    return body;
-  }
-  const fields = entries.map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n');
-  return `---\n${fields}\n---\n${body}`;
-};
-
-const isMetadataValue = (value: unknown): value is DocumentMetadataValue =>
-  value === null ||
-  typeof value === 'string' ||
-  typeof value === 'boolean' ||
-  (typeof value === 'number' && Number.isFinite(value));
 
 const compareKeys = (left: string, right: string): number => {
   if (left < right) {

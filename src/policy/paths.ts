@@ -1,4 +1,5 @@
 import { ROOT_PATH, VirtualPathError, normalizeVirtualPath } from '../core/path.js';
+import type { CommandWord } from './segments.js';
 import { denyPolicy, type CommandInspectDecision, type PolicyReasonCode } from './types.js';
 
 export type ResolvedPath =
@@ -7,6 +8,13 @@ export type ResolvedPath =
   | { readonly kind: 'deny'; readonly decision: CommandInspectDecision };
 
 const HOME_PATH_PATTERN = /^(?:~|\$home|\$\{home\})(?:\/|$)/iu;
+
+export const resolveCommandWord = (word: CommandWord, cwd: string): ResolvedPath => {
+  if (word.kind === 'dynamic') {
+    return deny('unsupported-syntax', 'Variable path expansion cannot be inspected safely.');
+  }
+  return resolveCommandPath(word.value, cwd);
+};
 
 export const resolveCommandPath = (input: string, cwd: string): ResolvedPath => {
   if (HOME_PATH_PATTERN.test(input)) {

@@ -1,13 +1,17 @@
 import { describe, expect, test } from 'vitest';
 
-import { createYamlFrontmatterCodec, plainTextDocumentCodec } from '../src/api/document-codec.ts';
+import {
+  createYamlFrontmatterCodec,
+  plainTextDocumentCodec,
+  renderStoredDocument,
+} from '../src/api/document-codec.ts';
 
 describe('text document codecs', () => {
   test('leaves plain text byte-for-byte unchanged', () => {
     const content = '---\nthis is ordinary text\n';
     const parsed = plainTextDocumentCodec.parse('/notes.md', content);
     expect(parsed).toStrictEqual({ body: content, metadata: {}, path: '/notes.md' });
-    expect(plainTextDocumentCodec.render(parsed)).toBe(content);
+    expect(renderStoredDocument(parsed)).toBe(content);
   });
 
   test('separates YAML metadata and renders one canonical document', () => {
@@ -21,7 +25,7 @@ describe('text document codecs', () => {
       metadata: { description: 'A concise route to relevant context', priority: 2 },
       path: '/notes.md',
     });
-    expect(codec.render(parsed)).toBe(
+    expect(renderStoredDocument(parsed)).toBe(
       '---\ndescription: "A concise route to relevant context"\npriority: 2\n---\n# Notes\n\nBody.\n',
     );
   });

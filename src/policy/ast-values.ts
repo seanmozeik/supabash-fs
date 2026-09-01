@@ -1,6 +1,17 @@
-import type { ArithmeticExpression, ParsedScript, TestExpression, Word, WordPart } from 'unbash';
+import type {
+  ArithmeticExpression,
+  Command,
+  ParsedScript,
+  TestExpression,
+  Word,
+  WordPart,
+} from 'unbash';
 
-type ScriptVisitor = (script: ParsedScript, environment: Map<string, string>) => void;
+import { dynamicWord, literalWord, type CommandWord } from './segments.js';
+
+export type ShellEnvironment = Map<string, CommandWord>;
+
+type ScriptVisitor = (script: ParsedScript, environment: ShellEnvironment) => void;
 
 export class AstValues {
   readonly #visitScript: ScriptVisitor;
@@ -9,14 +20,14 @@ export class AstValues {
     this.#visitScript = visitScript;
   }
 
-  word(word: Word, environment: Map<string, string>): string | undefined {
+  word(word: Word, environment: ShellEnvironment): CommandWord {
     if (word.parts === undefined) {
-      return word.value;
+      return literalWord(word.value);
     }
-    return this.parts(word.parts, environment);
+    return this.parts(word.parts, environment) ?? dynamicWord(word.text);
   }
 
-  arithmetic(expression: ArithmeticExpression, environment: Map<string, string>): void {
+  arithmetic(expression: ArithmeticExpression, environment: ShellEnvironment): void {
     switch (expression.type) {
       case 'ArithmeticBinary': {
         this.arithmetic(expression.left, environment);
@@ -55,7 +66,7 @@ export class AstValues {
     }
   }
 
-  testExpression(expression: TestExpression, environment: Map<string, string>): void {
+  testExpression(expression: TestExpression, environment: ShellEnvironment): void {
     switch (expression.type) {
       case 'TestUnary': {
         this.word(expression.operand, environment);
@@ -85,24 +96,27 @@ export class AstValues {
     }
   }
 
-  private parts(parts: readonly WordPart[], environment: Map<string, string>): string | undefined {
+  private parts(
+    parts: readonly WordPart[],
+    environment: ShellEnvironment,
+  ): CommandWord | undefined {
     let value = '';
     for (const part of parts) {
       const next = this.part(part, environment);
-      if (next === undefined) {
+      if (next === undefined || next.kind === 'dynamic') {
         return undefined;
       }
-      value += next;
+      value += next.value;
     }
-    return value;
+    return literalWord(value);
   }
 
-  private part(part: WordPart, environment: Map<string, string>): string | undefined {
+  private part(part: WordPart, environment: ShellEnvironment): CommandWord | undefined {
     switch (part.type) {
       case 'Literal':
       case 'SingleQuoted':
       case 'AnsiCQuoted': {
-        return part.value;
+        return literalWord(part.value);
       }
       case 'DoubleQuoted':
       case 'LocaleString': {
@@ -140,6 +154,27 @@ export class AstValues {
     }
   }
 }
+
+export const applyAssignments = (
+  command: Command,
+  assignmentValues: readonly CommandWord[],
+  environment: ShellEnvironment,
+): void => {
+  for (const [index, assignment] of command.prefix.entries()) {
+    if (
+      assignment.name !== undefined &&
+      assignment.append !== true &&
+      assignment.array === undefined
+    ) {
+      const value = assignmentValues[index];
+      if (value === undefined || value.kind === 'dynamic') {
+        environment.delete(assignment.name);
+      } else {
+        environment.set(assignment.name, value);
+      }
+    }
+  }
+};
 
 const unreachable = (value: never): never => {
   throw new Error(`Unsupported Unbash value: ${String(value)}`);

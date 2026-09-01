@@ -1,8 +1,15 @@
 export type SegmentJoiner = '&&' | '||' | '|' | '|&' | ';' | '&';
 
+export type CommandWordKind = 'dynamic' | 'literal';
+
+export interface CommandWord {
+  readonly kind: CommandWordKind;
+  readonly value: string;
+}
+
 export interface CommandRedirect {
   readonly op: string;
-  readonly target: string;
+  readonly target: CommandWord;
 }
 
 export interface CommandSegment {
@@ -12,6 +19,7 @@ export interface CommandSegment {
   readonly joiner?: SegmentJoiner;
   readonly redirects: readonly CommandRedirect[];
   readonly tokens: readonly string[];
+  readonly words: readonly CommandWord[];
 }
 
 export const pipelineDepth = (segments: readonly CommandSegment[]): number => {
@@ -28,31 +36,39 @@ export const pipelineDepth = (segments: readonly CommandSegment[]): number => {
   return deepest;
 };
 
-const toSegment = (
-  words: readonly string[],
-  redirects: readonly CommandRedirect[],
+export const literalWord = (value: string): CommandWord => ({ kind: 'literal', value });
+
+export const dynamicWord = (value: string): CommandWord => ({ kind: 'dynamic', value });
+
+export const segmentFromWords = (
+  words: readonly CommandWord[],
+  redirects: readonly CommandRedirect[] = [],
   joiner?: SegmentJoiner,
 ): CommandSegment => {
-  const flags = words.filter((word, index) => index > 0 && isFlag(word));
+  const tokens = words.map((word) => word.value);
+  const flags = words
+    .filter((word, index) => index > 0 && isFlag(word.value))
+    .map(({ value }) => value);
   const args = positionalArgs(words);
-  const segment: CommandSegment = { args, flags, head: words[0] ?? '', redirects, tokens: words };
+  const segment: CommandSegment = {
+    args,
+    flags,
+    head: words[0]?.value ?? '',
+    redirects,
+    tokens,
+    words,
+  };
   return joiner === undefined ? segment : { ...segment, joiner };
 };
 
-export const segmentFromWords = (
-  words: readonly string[],
-  redirects: readonly CommandRedirect[] = [],
-  joiner?: SegmentJoiner,
-): CommandSegment => toSegment(words, redirects, joiner);
-
-const positionalArgs = (words: readonly string[]): readonly string[] => {
+const positionalArgs = (words: readonly CommandWord[]): readonly string[] => {
   const args: string[] = [];
   let endOfFlags = false;
   for (const word of words.slice(1)) {
-    if (!endOfFlags && word === '--') {
+    if (!endOfFlags && word.value === '--') {
       endOfFlags = true;
-    } else if (endOfFlags || !isFlag(word)) {
-      args.push(word);
+    } else if (endOfFlags || !isFlag(word.value)) {
+      args.push(word.value);
     }
   }
   return args;

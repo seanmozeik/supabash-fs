@@ -1,4 +1,6 @@
 import type { ToolSet } from 'ai';
+import { latin1FromBytes } from 'just-bash';
+import { defineCommand } from 'just-bash/browser';
 import { describe, expect, test } from 'vitest';
 
 import { createTools } from '../../src/ai-sdk/index.ts';
@@ -70,6 +72,28 @@ describe('workspace AI SDK tools', () => {
       exitCode: 126,
       stderr: 'Policy denied (denied): rm is blocked.',
     });
+  });
+
+  test('runs an explicitly allowed custom command in pipelines and redirections', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage());
+    const upper = defineCommand('upper', (_args, context) =>
+      Promise.resolve({
+        exitCode: 0,
+        stderr: '',
+        stdout: latin1FromBytes(context.stdin).toUpperCase(),
+      }),
+    );
+    const { tools } = await createTools({
+      bash: { customCommands: [upper], policyOptions: { extraAllowCommands: ['upper'] } },
+      workspace,
+    });
+
+    const result = await invoke(tools['bash'], {
+      command: "printf 'memory' | upper > /result.txt && cat /result.txt",
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, stdout: 'MEMORY' });
+    await expect(workspace.fs.readFile('/result.txt')).resolves.toBe('MEMORY');
   });
 
   test('requires a positive Bash execution time limit', async () => {

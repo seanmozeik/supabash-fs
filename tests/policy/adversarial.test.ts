@@ -35,7 +35,9 @@ describe('adversarial command policy', () => {
 
   test('inspects process substitution, pipelines, and fork bombs', async () => {
     const policy = createCommandPolicy();
-    await expect(policy.inspect('cat <(echo hi)')).resolves.toStrictEqual({ allow: true });
+    await expect(policy.inspect('cat <(echo hi)')).resolves.toMatchObject({
+      code: 'unsupported-syntax',
+    });
     await expect(policy.inspect('cat <(curl https://example.com)')).resolves.toMatchObject({
       code: 'network-disabled',
     });
@@ -76,6 +78,22 @@ describe('adversarial command policy', () => {
     });
     await expect(policy.inspect('cd /docs && cat /alias.md')).resolves.toMatchObject({
       code: 'path-out-of-root',
+    });
+  });
+
+  test('fails closed on unresolved paths and inspects function calls', async () => {
+    const policy = createCommandPolicy();
+    await expect(policy.inspect('rm -rf "$UNSET"')).resolves.toMatchObject({
+      code: 'unsupported-syntax',
+    });
+    await expect(policy.inspect('rm $(echo /)')).resolves.toMatchObject({
+      code: 'unsupported-syntax',
+    });
+    await expect(policy.inspect('evil() { rm -rf "$1"; }; evil /')).resolves.toMatchObject({
+      code: 'recursive-root',
+    });
+    await expect(policy.inspect('cat <<EOF > /notes.md\nhello\nEOF')).resolves.toStrictEqual({
+      allow: true,
     });
   });
 

@@ -1,6 +1,11 @@
 import { parentVirtualPath } from '../core/path.js';
-import { isRootTarget, resolveCommandPath, type ResolvedPath } from './paths.js';
-import { hasShortFlag, isFlag, type CommandSegment } from './segments.js';
+import {
+  isRootTarget,
+  resolveCommandPath,
+  resolveCommandWord,
+  type ResolvedPath,
+} from './paths.js';
+import { hasShortFlag, isFlag, type CommandSegment, type CommandWord } from './segments.js';
 import {
   allowPolicy,
   denyPolicy,
@@ -14,14 +19,14 @@ export const checkSegmentPaths = async (
   cwd: string,
   options: CommandPolicyOptions,
 ): Promise<CommandInspectDecision> => {
-  for (const redirect of segment.redirects) {
-    const decision = await checkResolved(resolveCommandPath(redirect.target, cwd), cwd, options);
+  for (const redirect of segment.redirects.filter((entry) => isPathRedirect(entry.op))) {
+    const decision = await checkResolved(resolveCommandWord(redirect.target, cwd), cwd, options);
     if (!decision.allow) {
       return decision;
     }
   }
   for (const arg of pathArgs(segment)) {
-    const decision = await checkResolved(resolveCommandPath(arg, cwd), cwd, options);
+    const decision = await checkResolved(resolveCommandWord(arg, cwd), cwd, options);
     if (!decision.allow) {
       return decision;
     }
@@ -39,7 +44,7 @@ export const checkDestructive = (
   }
   if (
     segment.head === 'rm' &&
-    pathArgs(segment).some((arg) => isRootTarget(resolveCommandPath(arg, cwd), cwd))
+    pathArgs(segment).some((arg) => isRootTarget(resolveCommandWord(arg, cwd), cwd))
   ) {
     return denyPolicy('recursive-root', 'Deleting the mounted root is blocked.');
   }
@@ -64,11 +69,11 @@ export const nextWorkingDirectory = (
   if (segment.head !== 'cd') {
     return { cwd };
   }
-  const [target] = segment.args;
+  const [target] = pathArgs(segment);
   if (target === undefined) {
     return { cwd };
   }
-  const resolved = resolveCommandPath(target, cwd);
+  const resolved = resolveCommandWord(target, cwd);
   if (resolved.kind === 'deny') {
     return { decision: resolved.decision };
   }
@@ -130,7 +135,7 @@ const isRecursiveRoot = (segment: CommandSegment, cwd: string): boolean => {
   if (!hasRecursiveFlag(segment)) {
     return false;
   }
-  return pathArgs(segment).some((arg) => isRootTarget(resolveCommandPath(arg, cwd), cwd));
+  return pathArgs(segment).some((arg) => isRootTarget(resolveCommandWord(arg, cwd), cwd));
 };
 
 const isUnboundedRm = (segment: CommandSegment, cwd: string): boolean => {
@@ -138,7 +143,7 @@ const isUnboundedRm = (segment: CommandSegment, cwd: string): boolean => {
     return false;
   }
   return pathArgs(segment).some((arg) => {
-    const resolved = resolveCommandPath(arg, cwd);
+    const resolved = resolveCommandWord(arg, cwd);
     return resolved.kind === 'glob' && isRootTarget(resolved, cwd);
   });
 };
@@ -155,32 +160,55 @@ const hasRecursiveFlag = (segment: CommandSegment): boolean => {
 };
 
 const findRoots = (segment: CommandSegment, cwd: string): readonly ResolvedPath[] => {
-  const roots: string[] = [];
-  for (const token of segment.tokens.slice(1)) {
-    if (token.startsWith('-')) {
+  const roots: CommandWord[] = [];
+  for (const word of segment.words.slice(1)) {
+    if (word.value.startsWith('-')) {
       break;
     }
-    roots.push(token);
+    roots.push(word);
   }
-  const checked = roots.length === 0 ? ['.'] : roots;
-  return checked.map((root) => resolveCommandPath(root, cwd));
+  const checked = roots.length === 0 ? [{ kind: 'literal' as const, value: '.' }] : roots;
+  return checked.map((root) => resolveCommandWord(root, cwd));
 };
 
-const pathArgs = (segment: CommandSegment): readonly string[] => {
+const pathArgs = (segment: CommandSegment): readonly CommandWord[] => {
   if (NON_PATH_HEADS.has(segment.head)) {
     return [];
   }
+  const words = positionalWords(segment);
   if (segment.head === 'chmod') {
-    return segment.args.filter((arg) => !isMode(arg));
+    return words.filter((word) => !isMode(word.value));
   }
   if (segment.head === 'ln') {
-    return segment.args;
+    return words;
   }
   if (segment.head === 'bash' || segment.head === 'sh') {
-    return segment.args.filter((arg) => arg !== '-c' && !isFlag(arg));
+    return words.filter((word) => word.value !== '-c' && !isFlag(word.value));
   }
-  return segment.args;
+  return words;
 };
+
+const positionalWords = (segment: CommandSegment): readonly CommandWord[] => {
+  const words: CommandWord[] = [];
+  let endOfFlags = false;
+  for (const word of segment.words.slice(1)) {
+    if (!endOfFlags && word.value === '--') {
+      endOfFlags = true;
+    } else if (endOfFlags || !isFlag(word.value)) {
+      words.push(word);
+    }
+  }
+  return words;
+};
+
+const isPathRedirect = (operator: string): boolean =>
+  operator === '>' ||
+  operator === '>>' ||
+  operator === '<' ||
+  operator === '<>' ||
+  operator === '>|' ||
+  operator === '&>' ||
+  operator === '&>>';
 
 const isMode = (value: string): boolean =>
   /^[0-7]{3,4}$/u.test(value) || /[ugoa]*[+-=]/u.test(value);

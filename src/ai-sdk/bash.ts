@@ -45,7 +45,12 @@ export const createWorkspaceBashTool = async (
         stdout: safeToolText(result.stdout, maxBashOutput, boundText),
       },
     }),
-    sandbox: new Bash({ cwd: '/', executionLimits: { maxExecutionTimeMs }, fs: workspace.fs }),
+    sandbox: new Bash({
+      cwd: '/',
+      ...(options.customCommands !== undefined && { customCommands: [...options.customCommands] }),
+      executionLimits: { maxExecutionTimeMs },
+      fs: workspace.fs,
+    }),
   });
   const { execute } = toolkit.bash;
   if (execute === undefined) {

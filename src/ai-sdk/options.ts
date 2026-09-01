@@ -1,3 +1,5 @@
+import type { CustomCommand } from 'just-bash/browser';
+
 import type { Workspace } from '../api/contracts.js';
 import type { ApplyPatchOptions } from '../patch/operations.js';
 import type { CommandInspector, CommandPolicyOptions } from '../policy/types.js';
@@ -14,6 +16,7 @@ export interface BashToolLimits {
 }
 
 export interface BashToolOptions {
+  readonly customCommands?: readonly CustomCommand[];
   readonly limits?: BashToolLimits;
   readonly policy?: CommandInspector;
   readonly policyOptions?: CommandPolicyOptions;
