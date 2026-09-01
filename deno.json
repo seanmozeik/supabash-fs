@@ -7,7 +7,8 @@
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2.112.4",
     "ai": "npm:ai@7.0.83",
     "bash-tool": "npm:bash-tool@1.3.19",
-    "just-bash/browser": "npm:just-bash@3.4.2/browser"
+    "just-bash/browser": "npm:just-bash@3.4.2/browser",
+    "unbash": "npm:unbash@4.0.10"
   },
   "lock": false
 }

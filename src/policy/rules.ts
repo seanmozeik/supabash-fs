@@ -1,4 +1,5 @@
 import { ROOT_PATH } from '../core/path.js';
+import { commandProgram } from './ast.js';
 import { checkDestructive, checkSegmentPaths, nextWorkingDirectory } from './checks.js';
 import {
   isAllowedCommand,
@@ -7,8 +8,7 @@ import {
   isNetworkCommand,
   isWrapperCommand,
 } from './commands.js';
-import { pipelineDepth, segmentsFromTokens, isFlag, type CommandSegment } from './segments.js';
-import { tokenizeCommand } from './tokenize.js';
+import { pipelineDepth, isFlag, type CommandSegment } from './segments.js';
 import {
   DEFAULT_MAX_COMMAND_LENGTH,
   DEFAULT_MAX_PIPELINE_DEPTH,
@@ -31,11 +31,11 @@ export const evaluateCommand = (
       denyPolicy('command-too-long', 'Command exceeds the configured length limit.'),
     );
   }
-  const tokens = tokenizeCommand(command);
-  if (!tokens.ok) {
-    return Promise.resolve(tokens.decision);
+  const program = commandProgram(command);
+  if (!program.ok) {
+    return Promise.resolve(program.decision);
   }
-  const segments = segmentsFromTokens(tokens.tokens);
+  const { segments } = program;
   if (segments.length > (options.maxSegments ?? DEFAULT_MAX_SEGMENTS)) {
     return Promise.resolve(
       denyPolicy('too-many-segments', 'Command has too many chained segments.'),

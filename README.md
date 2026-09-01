@@ -298,7 +298,9 @@ const policy = createCommandPolicy({
 });
 ```
 
-The default policy allows ordinary in-root work and denies or bounds:
+The default policy parses the complete command with Unbash. It can inspect
+ordinary pipelines, redirections, substitutions, literal variables, loops,
+conditionals, and grouped commands. It denies or bounds:
 
 - paths outside the virtual root or reserved `.supabash` segments
 - recursive operations whose target is the mounted root

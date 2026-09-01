@@ -28,15 +28,16 @@ describe('adversarial command policy', () => {
       code: 'ambiguous-path',
     });
     await expect(policy.inspect('rm *')).resolves.toMatchObject({ code: 'unbounded-work' });
-    await expect(policy.inspect(String.raw`cat /docs\secret.md`)).resolves.toMatchObject({
-      code: 'ambiguous-path',
+    await expect(policy.inspect(String.raw`cat /docs\secret.md`)).resolves.toStrictEqual({
+      allow: true,
     });
   });
 
-  test('rejects process substitution, pipelines to curl, and fork bombs', async () => {
+  test('inspects process substitution, pipelines, and fork bombs', async () => {
     const policy = createCommandPolicy();
-    await expect(policy.inspect('cat <(echo hi)')).resolves.toMatchObject({
-      code: 'unsupported-syntax',
+    await expect(policy.inspect('cat <(echo hi)')).resolves.toStrictEqual({ allow: true });
+    await expect(policy.inspect('cat <(curl https://example.com)')).resolves.toMatchObject({
+      code: 'network-disabled',
     });
     await expect(policy.inspect('printf hi | curl https://example.com')).resolves.toMatchObject({
       code: 'network-disabled',
@@ -44,6 +45,22 @@ describe('adversarial command policy', () => {
     await expect(policy.inspect(':(){ :|:& };:')).resolves.toMatchObject({
       code: 'dangerous-command',
     });
+  });
+
+  test('resolves literal variables and inspects compound Bash syntax', async () => {
+    const policy = createCommandPolicy();
+    await expect(policy.inspect('root=/; rm -rf "$root"')).resolves.toMatchObject({
+      code: 'recursive-root',
+    });
+    await expect(
+      policy.inspect('for file in /one.md /two.md; do grep -q needle "$file" || true; done'),
+    ).resolves.toStrictEqual({ allow: true });
+    await expect(
+      policy.inspect('if test -f /one.md; then cat /one.md; else cat /two.md; fi'),
+    ).resolves.toStrictEqual({ allow: true });
+    await expect(
+      policy.inspect('result=$(curl https://example.com); echo "$result"'),
+    ).resolves.toMatchObject({ code: 'network-disabled' });
   });
 
   test('rejects symlink targets that leave the mounted root', async () => {

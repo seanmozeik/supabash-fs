@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Parse Bash with Unbash before policy evaluation. Inspect pipelines,
+  redirections, substitutions, literal variables, loops, conditionals, and
+  grouped commands without treating ordinary compound Bash as unsupported.
+- Keep command policy as a damage limiter. Workspace scoping and backend
+  authorization remain the security boundary.
+
 ## 0.3.0
 
 - Add an explicit Postgres workspace backend behind the existing `Workspace`

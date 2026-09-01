@@ -68,7 +68,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.112.4"
+    "@supabase/supabase-js": "2.112.4",
+    "unbash": "4.0.10"
   },
   "devDependencies": {
     "@ai-sdk/openai": "4.0.50",
