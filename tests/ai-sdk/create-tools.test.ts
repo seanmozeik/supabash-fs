@@ -8,6 +8,15 @@ import { createStorageWorkspace } from '../../src/core/workspace.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
 describe('workspace AI SDK tools', () => {
+  test('describes the supported compound Bash surface once at the tool boundary', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage());
+    const { tools } = await createTools({ workspace });
+
+    expect(tools['bash']?.description).toContain(
+      'pipelines, redirection, command and process substitution, loops, conditionals, functions, grouped commands, command chains, and find -exec',
+    );
+  });
+
   test('runs Bash and Apply Patch on one staged filesystem without committing', async () => {
     const storage = new MemoryStorage();
     const workspace = await createStorageWorkspace(storage);

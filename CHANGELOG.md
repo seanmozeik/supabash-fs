@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+- Describe the supported compound Bash syntax in the shared AI SDK tool
+  contract so every agent can use the native shell surface without host-specific
+  prompt instructions.
+
 ## 0.4.1
 
 - Let Just Bash resolve command substitutions, path substitutions, loop values,

@@ -11,7 +11,7 @@ import type { BashToolOptions } from './options.js';
 import { safeToolText } from './redact.js';
 
 const SCOPED_ROOT_INSTRUCTIONS =
-  'The filesystem root is already scoped to this workspace. Do not select a bucket, user, prefix, access token, or storage client. Do not commit, discard, inspect history, checkpoint, diff, or restore.';
+  'The filesystem root is already scoped to this workspace. Supported shell syntax includes pipelines, redirection, command and process substitution, loops, conditionals, functions, grouped commands, command chains, and find -exec. Do not select a bucket, user, prefix, access token, or storage client. Do not commit, discard, inspect history, checkpoint, diff, or restore.';
 export const DEFAULT_MAX_BASH_EXECUTION_TIME_MS = 30_000;
 
 /**
