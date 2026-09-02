@@ -211,7 +211,9 @@ class PostgresBackend implements WorkspaceBackend {
         ? parsedArguments
         : { ...parsedArguments, p_delegated_grant: this.delegatedGrant };
     try {
-      const result = await callPostgresRpc(this.client, name, decode, requestArguments);
+      const result = await callPostgresRpc(this.client, name, decode, requestArguments, {
+        outcomeUnknownOnTransportFailure: MUTATING_OPERATIONS.has(operation),
+      });
       const replayed = isReplayed(result);
       timer.success({
         serializedPayloadBytes: serializedBytes(requestArguments),
@@ -226,6 +228,13 @@ class PostgresBackend implements WorkspaceBackend {
     }
   }
 }
+
+const MUTATING_OPERATIONS: ReadonlySet<WorkspaceOperation> = new Set([
+  'checkpoint',
+  'checkpoint-delete',
+  'commit',
+  'purge',
+]);
 
 const serializedBytes = (value: unknown): number =>
   new TextEncoder().encode(JSON.stringify(value)).byteLength;

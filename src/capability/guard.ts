@@ -15,6 +15,12 @@ import type {
   RevisionDiff,
   RevisionDiffInput,
 } from '../api/history.js';
+import type {
+  DelegatedPostgresWorkspace,
+  DelegatedPostgresWorkspaceInfo,
+  PostgresWorkspace,
+  PostgresWorkspaceSnapshot,
+} from '../api/postgres.js';
 import { restrictFileSystem } from './readonly-fs.js';
 
 export const guardWorkspace = (
@@ -24,13 +30,14 @@ export const guardWorkspace = (
   correlationId: string,
 ): Workspace => new GuardedWorkspace(workspace, operations, actor, correlationId);
 
-export const guardWorkspaceWithCapabilities = <Capabilities>(
-  workspace: Workspace & { readonly capabilities: Capabilities },
+export const guardDelegatedPostgresWorkspace = (
+  workspace: PostgresWorkspace,
   operations: ReadonlySet<DelegatedOperation>,
   actor: string,
   correlationId: string,
-): Workspace & { readonly capabilities: Capabilities } =>
-  new CapabilityGuardedWorkspace(workspace, operations, actor, correlationId);
+  delegation: DelegatedPostgresWorkspaceInfo,
+): DelegatedPostgresWorkspace =>
+  new GuardedPostgresWorkspace(workspace, operations, actor, correlationId, delegation);
 
 class GuardedWorkspace implements Workspace {
   readonly fs: Workspace['fs'];
@@ -78,6 +85,9 @@ class GuardedWorkspace implements Workspace {
   }
 
   discard(): Promise<void> {
+    if (this.inner.changes().length === 0) {
+      return Promise.resolve();
+    }
     return this.allow('write', () => this.inner.discard());
   }
 
@@ -123,17 +133,26 @@ class GuardedWorkspace implements Workspace {
   }
 }
 
-class CapabilityGuardedWorkspace<Capabilities> extends GuardedWorkspace implements Workspace {
-  readonly capabilities: Capabilities;
+class GuardedPostgresWorkspace extends GuardedWorkspace implements DelegatedPostgresWorkspace {
+  readonly capabilities: PostgresWorkspace['capabilities'];
+  readonly delegation: DelegatedPostgresWorkspaceInfo;
+  private readonly postgres: PostgresWorkspace;
 
   constructor(
-    inner: Workspace & { readonly capabilities: Capabilities },
+    inner: PostgresWorkspace,
     operations: ReadonlySet<DelegatedOperation>,
     actor: string,
     correlationId: string,
+    delegation: DelegatedPostgresWorkspaceInfo,
   ) {
     super(inner, operations, actor, correlationId);
     this.capabilities = inner.capabilities;
+    this.delegation = delegation;
+    this.postgres = inner;
+  }
+
+  committedSnapshot(): PostgresWorkspaceSnapshot {
+    return this.postgres.committedSnapshot();
   }
 }
 

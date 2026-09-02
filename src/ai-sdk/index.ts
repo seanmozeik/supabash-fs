@@ -17,6 +17,7 @@ export type {
   ViewImageOptions,
   ViewImageResult,
 } from './options.js';
+export type { WorkspaceFileSystemViewOptions } from '../core/filesystem-view.js';
 
 export const createTools = createWorkspaceTools;
 export const DEFAULT_MAX_BASH_EXECUTION_TIME_MS = defaultMaxBashExecutionTimeMs;

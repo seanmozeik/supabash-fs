@@ -15,6 +15,10 @@ import {
   plainTextDocumentCodec as textDocumentCodec,
   renderStoredDocument as renderWorkspaceDocument,
 } from './api/document-codec.js';
+import {
+  isRetryableSupabashError as retryableSupabashError,
+  isUnknownOutcomeSupabashError as unknownOutcomeSupabashError,
+} from './api/errors.js';
 import { POSTGRES_WORKSPACE_CAPABILITIES as postgresWorkspaceCapabilities } from './api/postgres.js';
 import { Supabash as openWorkspace, SupabashError as WorkspaceError } from './api/supabash.js';
 import { createDelegatedCapability as signDelegatedCapability } from './capability/create.js';
@@ -22,6 +26,7 @@ import {
   verifyDelegatedCapability as checkDelegatedCapability,
   verifyPostgresDelegatedCapability as checkPostgresDelegatedCapability,
 } from './capability/verify.js';
+import { createWorkspaceFileSystemView as createFileSystemView } from './core/filesystem-view.js';
 import {
   DEFAULT_MAX_DIFF_PREVIEW_BYTES as defaultMaxDiffPreviewBytes,
   DEFAULT_MAX_FILE_SIZE as defaultMaxFileSize,
@@ -79,10 +84,14 @@ export type {
 } from './api/observability.js';
 export type {
   CreatePostgresWorkspaceOptions,
+  DelegatedPostgresWorkspace,
+  DelegatedPostgresWorkspaceInfo,
   OpenPostgresDelegatedOptions,
+  PostgresWorkspaceDocumentSnapshot,
   PostgresWorkspace,
   PostgresWorkspaceCapabilities,
   PostgresWorkspaceOptions,
+  PostgresWorkspaceSnapshot,
 } from './api/postgres.js';
 export type {
   CommitContext,
@@ -92,7 +101,7 @@ export type {
   CommitOptions,
   CommitStatus,
 } from './api/commit.js';
-export type { SupabashErrorCode } from './api/errors.js';
+export type { SupabashErrorCode, SupabashErrorOptions } from './api/errors.js';
 export type {
   CheckpointOptions,
   CheckpointReceipt,
@@ -113,6 +122,7 @@ export type {
 } from './api/history.js';
 export type { JsonValue } from './api/json.js';
 export type { WorkspaceLimits } from './history/limits.js';
+export type { WorkspaceFileSystemViewOptions } from './core/filesystem-view.js';
 export type { SupabashOptions } from './api/options.js';
 export type { ApplyDiffMode } from './patch/apply-diff.js';
 export type {
@@ -154,10 +164,13 @@ export const POSTGRES_INSTALL_SQL_URL = new URL(
 export const POSTGRES_REMOVE_SQL_URL = new URL('../sql/postgres/0001_remove.sql', import.meta.url);
 export const Supabash = openWorkspace;
 export const SupabashError = WorkspaceError;
+export const isRetryableSupabashError = retryableSupabashError;
+export const isUnknownOutcomeSupabashError = unknownOutcomeSupabashError;
 export const applyDiff = applyV4ADiff;
 export const applyPatch = applyWorkspacePatch;
 export const applyPatchOperations = applyWorkspacePatchOperations;
 export const createCommandPolicy = createWorkspaceCommandPolicy;
+export const createWorkspaceFileSystemView = createFileSystemView;
 export const createDelegatedCapability = signDelegatedCapability;
 export const verifyDelegatedCapability = checkDelegatedCapability;
 export const verifyPostgresDelegatedCapability = checkPostgresDelegatedCapability;

@@ -1,6 +1,11 @@
 import { readFile } from 'node:fs/promises';
 
-import { Supabash, SupabashError } from '../dist/index.js';
+import {
+  isRetryableSupabashError,
+  isUnknownOutcomeSupabashError,
+  Supabash,
+  SupabashError,
+} from '../dist/index.js';
 
 if (
   !Object.hasOwn(Supabash, 'open') ||
@@ -12,6 +17,13 @@ if (
 
 if (new SupabashError('STORAGE', 'Package smoke check').code !== 'STORAGE') {
   throw new TypeError('The built package does not export SupabashError.');
+}
+const retryable = new SupabashError('STORAGE', 'Package smoke check', {
+  outcomeUnknown: true,
+  retryable: true,
+});
+if (!isRetryableSupabashError(retryable) || !isUnknownOutcomeSupabashError(retryable)) {
+  throw new TypeError('The built package does not export its error classifiers.');
 }
 
 const source = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');

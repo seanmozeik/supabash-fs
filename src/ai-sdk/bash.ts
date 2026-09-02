@@ -3,6 +3,7 @@ import { createBashTool, type CommandResult } from 'bash-tool';
 import { Bash } from 'just-bash/browser';
 
 import type { Workspace } from '../api/contracts.js';
+import { SupabashError } from '../api/errors.js';
 import { createCommandPolicy } from '../policy/inspect.js';
 import { DEFAULT_MAX_COMMAND_LENGTH, type CommandInspectDecision } from '../policy/types.js';
 import { DEFAULT_MAX_BASH_OUTPUT, assertPositiveLimit, boundText } from './bounds.js';
@@ -18,7 +19,7 @@ export const DEFAULT_MAX_BASH_EXECUTION_TIME_MS = 30_000;
  * deny decision, so this adapter wraps execute() and inspects the command first.
  */
 export const createWorkspaceBashTool = async (
-  workspace: Workspace,
+  workspace: Pick<Workspace, 'fs'>,
   options: BashToolOptions = {},
 ): Promise<Tool> => {
   const maxCommandLength =
@@ -67,7 +68,15 @@ export const createWorkspaceBashTool = async (
       if (!decision.allow) {
         return denied(formatDenial(decision));
       }
-      const result = await execute({ command }, extra);
+      let result: unknown;
+      try {
+        result = await execute({ command }, extra);
+      } catch (error) {
+        if (error instanceof SupabashError && error.code === 'POLICY_DENIED') {
+          return denied(`Policy denied: ${error.message}`);
+        }
+        throw error;
+      }
       if (!isCommandResult(result)) {
         throw new Error('bash-tool returned a streaming result.');
       }

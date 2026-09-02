@@ -1,6 +1,7 @@
 import type { ToolSet } from 'ai';
 
 import type { Workspace } from '../api/contracts.js';
+import { createWorkspaceFileSystemView } from '../core/filesystem-view.js';
 import type { ApplyPatchOptions } from '../patch/operations.js';
 import { createApplyPatchTool } from './apply-patch-tool.js';
 import { createWorkspaceBashTool } from './bash.js';
@@ -14,11 +15,15 @@ export interface WorkspaceTools {
 }
 
 export const createTools = async (options: CreateToolsOptions): Promise<WorkspaceTools> => {
-  const bash = await createWorkspaceBashTool(options.workspace, options.bash);
+  const toolWorkspace =
+    options.view === undefined
+      ? options.workspace
+      : { fs: createWorkspaceFileSystemView(options.workspace.fs, options.view) };
+  const bash = await createWorkspaceBashTool(toolWorkspace, options.bash);
   const applyPatch =
     options.applyPatch === false
       ? undefined
-      : createApplyPatchTool(options.workspace, applyPatchOptions(options.applyPatch));
+      : createApplyPatchTool(toolWorkspace, applyPatchOptions(options.applyPatch));
   if (options.viewImage?.enabled !== true) {
     if (applyPatch === undefined) {
       return { tools: { bash }, workspace: options.workspace };
@@ -26,7 +31,7 @@ export const createTools = async (options: CreateToolsOptions): Promise<Workspac
     return { tools: { apply_patch: applyPatch, bash }, workspace: options.workspace };
   }
   const { createViewImageTool } = await import('./view-image.js');
-  const viewImage = createViewImageTool(options.workspace, options.viewImage.maxBytes);
+  const viewImage = createViewImageTool(toolWorkspace, options.viewImage.maxBytes);
   if (applyPatch === undefined) {
     return { tools: { bash, view_image: viewImage }, workspace: options.workspace };
   }

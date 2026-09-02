@@ -11,7 +11,10 @@ import type {
 import { DEFAULT_MAX_BASH_OUTPUT, boundText } from './bounds.js';
 import { safeToolText } from './redact.js';
 
-export const createApplyPatchTool = (workspace: Workspace, options: ApplyPatchOptions = {}): Tool =>
+export const createApplyPatchTool = (
+  workspace: Pick<Workspace, 'fs'>,
+  options: ApplyPatchOptions = {},
+): Tool =>
   openai.tools.applyPatch({
     execute: async ({ operation }): Promise<ApplyPatchResult> => {
       const result = await applyPatch(workspace, asPatchOperation(operation), options);

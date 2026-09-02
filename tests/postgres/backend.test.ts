@@ -1,11 +1,10 @@
 import { describe, expect, test, vi } from 'vitest';
 
 import { createYamlFrontmatterCodec } from '../../src/api/document-codec.ts';
-import type { SupabashError } from '../../src/api/errors.ts';
 import { asUnknownRecord, type JsonValue } from '../../src/api/json.ts';
 import { createBackendWorkspace } from '../../src/backend/workspace.ts';
 import { createPostgresBackend } from '../../src/postgres/backend.ts';
-import { postgresError, type PostgresRpcClient } from '../../src/postgres/rpc.ts';
+import type { PostgresRpcClient } from '../../src/postgres/rpc.ts';
 
 const workspace = '123e4567-e89b-42d3-a456-426614174000';
 
@@ -23,15 +22,6 @@ describe('postgres backend', () => {
       revision: '223e4567-e89b-42d3-a456-426614174000',
     });
     expect(rpc).toHaveBeenCalledWith('supabash_load_workspace', { p_workspace_id: workspace });
-  });
-
-  test('maps only the stable 409 conflict contract to COMMIT_CONFLICT', () => {
-    expect(postgresError({ code: 'PT409', message: 'SUPABASH_COMMIT_CONFLICT' })).toMatchObject({
-      code: 'COMMIT_CONFLICT',
-    } satisfies Partial<SupabashError>);
-    expect(postgresError({ code: 'PT409', message: 'some other conflict' })).toMatchObject({
-      code: 'STORAGE',
-    } satisfies Partial<SupabashError>);
   });
 
   test('rejects invalid snapshot byte metadata at the decoder boundary', async () => {

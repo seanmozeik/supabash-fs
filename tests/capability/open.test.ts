@@ -2,9 +2,12 @@ import { describe, expect, test } from 'vitest';
 
 import type { SupabashError } from '../../src/api/errors.ts';
 import { asUnknownRecord } from '../../src/api/json.ts';
+import { guardWorkspace } from '../../src/capability/guard.ts';
+import { createStorageWorkspace } from '../../src/core/workspace.ts';
 import { createDelegatedCapability, Supabash } from '../../src/index.ts';
 import { ed25519Pair, sampleClaims, verifierFor } from '../support/delegated.ts';
 import { FakeSupabase } from '../support/fake-supabase.ts';
+import { MemoryStorage } from '../support/memory-storage.ts';
 
 describe('delegated workspace access', () => {
   test('opens only the exact verified prefix', async () => {
@@ -153,6 +156,16 @@ describe('delegated workspace access', () => {
       authorizationError(),
     );
     await expect(workspace.commit()).rejects.toMatchObject(authorizationError());
+    await expect(workspace.discard()).resolves.toBeUndefined();
+  });
+
+  test('requires write permission to discard staged changes', async () => {
+    const inner = await createStorageWorkspace(new MemoryStorage());
+    await inner.fs.writeFile('/staged.md', 'staged\n');
+    const guarded = guardWorkspace(inner, new Set(['read']), 'delegated:reader', 'corr-reader');
+
+    await expect(guarded.discard()).rejects.toMatchObject(authorizationError());
+    expect(inner.changes()).toHaveLength(1);
   });
 
   test('keeps a nested prefix from reading parent objects', async () => {

@@ -1,7 +1,7 @@
 import type { CommitOptions } from '../api/commit.js';
 import type { CommitReceipt, WorkspaceChange } from '../api/contracts.js';
 import type { TextDocumentCodec } from '../api/document-codec.js';
-import { SupabashError } from '../api/errors.js';
+import { isUnknownOutcomeSupabashError, SupabashError } from '../api/errors.js';
 import type {
   CheckpointOptions,
   CheckpointReceipt,
@@ -16,7 +16,11 @@ import type {
   RevisionDiffInput,
 } from '../api/history.js';
 import type { WorkspaceObservability } from '../api/observability.js';
-import { POSTGRES_WORKSPACE_CAPABILITIES, type PostgresWorkspace } from '../api/postgres.js';
+import {
+  POSTGRES_WORKSPACE_CAPABILITIES,
+  type PostgresWorkspace,
+  type PostgresWorkspaceSnapshot,
+} from '../api/postgres.js';
 import { comparePaths } from '../core/entry-order.js';
 import { startOperation } from '../core/observability.js';
 import { isSameOrDescendant } from '../core/path.js';
@@ -39,12 +43,14 @@ import {
   historyPageLimit,
   normalizePurgeOptions,
 } from '../history/quota.js';
+import { commitAttempt, type PendingCommitAttempt } from './commit-attempt.js';
 import type {
   BackendDocument,
   BackendMutation,
   PinnedSnapshot,
   WorkspaceBackend,
 } from './contracts.js';
+import { publicSnapshot } from './public-snapshot.js';
 import {
   bodyLoader,
   decodeText,
@@ -94,6 +100,7 @@ class BackendWorkspace implements PostgresWorkspace {
   private readonly documentCodec: TextDocumentCodec;
   private readonly limits: WorkspaceLimits;
   private readonly replaceSnapshotBodies: TextTreeProjection['replaceSnapshotBodies'];
+  private pendingCommit: PendingCommitAttempt | undefined;
   private restoreSourceRevision: string | undefined;
   private snapshot: PinnedSnapshot;
 
@@ -119,6 +126,10 @@ class BackendWorkspace implements PostgresWorkspace {
     return publicChanges(this.fs);
   }
 
+  committedSnapshot(): PostgresWorkspaceSnapshot {
+    return publicSnapshot(this.snapshot);
+  }
+
   checkpoint(options: CheckpointOptions = {}): Promise<CheckpointReceipt> {
     return this.backend.checkpoint(options);
   }
@@ -129,7 +140,10 @@ class BackendWorkspace implements PostgresWorkspace {
 
   async commit(options: CommitOptions = {}): Promise<CommitReceipt> {
     const pending = persistentPending(this.fs);
-    const context = resolvedCommitContext(options.context, this.restoreSourceRevision);
+    const context = resolvedCommitContext(
+      options.context ?? this.pendingCommit?.context,
+      this.restoreSourceRevision,
+    );
     this.fs.beginCommit();
     try {
       const prepared = await prepareChanges(this.fs, pending, this.documentCodec);
@@ -146,24 +160,31 @@ class BackendWorkspace implements PostgresWorkspace {
         context.metadata,
         this.limits,
       );
+      const fingerprint = await commitFingerprint(changes, context);
+      const attempt = commitAttempt(this.pendingCommit, context, fingerprint);
+      this.pendingCommit = attempt;
       const result = await this.backend.commit({
         changes,
         context,
         expectedRevision: this.snapshot.revision,
-        fingerprint: await commitFingerprint(changes, context),
+        fingerprint,
         mutations: mutationsFrom(this.fs, pending, prepared),
         ...(this.restoreSourceRevision !== undefined && {
           restoreSourceRevision: this.restoreSourceRevision,
         }),
-        transactionId: crypto.randomUUID(),
+        transactionId: attempt.transactionId,
       });
       this.snapshot = await snapshotFromFileSystem(this.fs, this.documentCodec, result.receipt);
       this.replaceSnapshotBodies(this.snapshot);
       await this.fs.finishCommit(entriesFrom(this.snapshot));
+      this.pendingCommit = undefined;
       this.restoreSourceRevision = undefined;
       return result.receipt;
     } catch (error) {
       this.fs.failCommit();
+      if (!isUnknownOutcomeSupabashError(error)) {
+        this.pendingCommit = undefined;
+      }
       throw error;
     }
   }
@@ -174,6 +195,7 @@ class BackendWorkspace implements PostgresWorkspace {
 
   async discard(): Promise<void> {
     await this.fs.discardChanges();
+    this.pendingCommit = undefined;
     this.restoreSourceRevision = undefined;
   }
 

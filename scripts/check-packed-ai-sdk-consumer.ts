@@ -69,7 +69,10 @@ if (!Object.hasOwn(Supabash, 'open')) throw new Error('Missing Supabash.open.');
       `import { createTools, type CreateToolsOptions, type WorkspaceTools } from '@seanmozeik/supabash-fs/ai-sdk';
 import type { Workspace } from '@seanmozeik/supabash-fs';
 declare const workspace: Workspace;
-const options: CreateToolsOptions = { workspace };
+const options: CreateToolsOptions = {
+  view: { hiddenRoots: ['private'], root: '/memory' },
+  workspace,
+};
 const tools: Promise<WorkspaceTools> = createTools(options);
 void tools;
 `,

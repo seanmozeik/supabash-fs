@@ -35,9 +35,7 @@ describe('adversarial command policy', () => {
 
   test('inspects process substitution, pipelines, and fork bombs', async () => {
     const policy = createCommandPolicy();
-    await expect(policy.inspect('cat <(echo hi)')).resolves.toMatchObject({
-      code: 'unsupported-syntax',
-    });
+    await expect(policy.inspect('cat <(echo hi)')).resolves.toStrictEqual({ allow: true });
     await expect(policy.inspect('cat <(curl https://example.com)')).resolves.toMatchObject({
       code: 'network-disabled',
     });
@@ -81,20 +79,52 @@ describe('adversarial command policy', () => {
     });
   });
 
-  test('fails closed on unresolved paths and inspects function calls', async () => {
+  test('defers unresolved runtime values to the scoped Bash filesystem', async () => {
     const policy = createCommandPolicy();
-    await expect(policy.inspect('rm -rf "$UNSET"')).resolves.toMatchObject({
-      code: 'unsupported-syntax',
-    });
-    await expect(policy.inspect('rm $(echo /)')).resolves.toMatchObject({
-      code: 'unsupported-syntax',
-    });
+    await expect(policy.inspect('rm -rf "$UNSET"')).resolves.toStrictEqual({ allow: true });
+    await expect(policy.inspect('rm $(echo /)')).resolves.toStrictEqual({ allow: true });
     await expect(policy.inspect('evil() { rm -rf "$1"; }; evil /')).resolves.toMatchObject({
       code: 'recursive-root',
     });
     await expect(policy.inspect('cat <<EOF > /notes.md\nhello\nEOF')).resolves.toStrictEqual({
       allow: true,
     });
+  });
+
+  test('lets the sandbox resolve dynamic command names after inspecting substitutions', async () => {
+    const policy = createCommandPolicy();
+    await expect(
+      policy.inspect('name=$(printf curl); $name https://example.test'),
+    ).resolves.toStrictEqual({ allow: true });
+    await expect(policy.inspect('name=$(printf sudo); $name cat notes.md')).resolves.toStrictEqual({
+      allow: true,
+    });
+    await expect(policy.inspect('name=$(printf cat); $name ../outside.md')).resolves.toStrictEqual({
+      allow: true,
+    });
+    await expect(
+      policy.inspect('name=$(printf cat); $name > ../../outside.md'),
+    ).resolves.toMatchObject({ allow: false, code: 'path-out-of-root' });
+    await expect(
+      policy.inspect("name=$(printf '%s' curl); $name https://example.test"),
+    ).resolves.toMatchObject({ allow: false, code: 'network-disabled' });
+  });
+
+  test('lets the sandbox run dynamically generated nested shell scripts', async () => {
+    const policy = createCommandPolicy();
+    await expect(
+      policy.inspect(String.raw`script=$(printf 'cat /memory.md'); bash -c "$script"`),
+    ).resolves.toStrictEqual({ allow: true });
+  });
+
+  test('lets the scoped sandbox execute recursive paths resolved at runtime', async () => {
+    const policy = createCommandPolicy();
+    await expect(
+      policy.inspect(String.raw`for target in $(printf /); do rm -rf "$target"; done`),
+    ).resolves.toStrictEqual({ allow: true });
+    await expect(
+      policy.inspect(String.raw`for target in $(printf /); do find "$target" -delete; done`),
+    ).resolves.toStrictEqual({ allow: true });
   });
 
   test('tracks cd before a relative destructive command', async () => {

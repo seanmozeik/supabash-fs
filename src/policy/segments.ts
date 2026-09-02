@@ -1,11 +1,12 @@
 export type SegmentJoiner = '&&' | '||' | '|' | '|&' | ';' | '&';
 
-export type CommandWordKind = 'dynamic' | 'literal';
-
-export interface CommandWord {
-  readonly kind: CommandWordKind;
-  readonly value: string;
-}
+export type CommandWord =
+  | {
+      readonly kind: 'dynamic';
+      readonly source: 'expansion' | 'loop' | 'parameter' | 'placeholder' | 'substitution';
+      readonly value: string;
+    }
+  | { readonly kind: 'literal'; readonly value: string };
 
 export interface CommandRedirect {
   readonly op: string;
@@ -38,7 +39,10 @@ export const pipelineDepth = (segments: readonly CommandSegment[]): number => {
 
 export const literalWord = (value: string): CommandWord => ({ kind: 'literal', value });
 
-export const dynamicWord = (value: string): CommandWord => ({ kind: 'dynamic', value });
+export const dynamicWord = (
+  value: string,
+  source: Extract<CommandWord, { readonly kind: 'dynamic' }>['source'] = 'expansion',
+): CommandWord => ({ kind: 'dynamic', source, value });
 
 export const segmentFromWords = (
   words: readonly CommandWord[],

@@ -1,14 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 
+import type { DelegatedOperation } from '../api/capability.js';
 import { SupabashError } from '../api/errors.js';
 import type {
   CreatePostgresWorkspaceOptions,
+  DelegatedPostgresWorkspace,
   OpenPostgresDelegatedOptions,
   PostgresWorkspace,
   PostgresWorkspaceOptions,
 } from '../api/postgres.js';
 import { createBackendWorkspace } from '../backend/workspace.js';
-import { guardWorkspaceWithCapabilities } from '../capability/guard.js';
+import { guardDelegatedPostgresWorkspace } from '../capability/guard.js';
 import {
   consumeDelegatedCapabilityNonce,
   verifyDelegatedCapabilityClaims,
@@ -42,12 +44,18 @@ export const createPostgresWorkspace = async (
   options: CreatePostgresWorkspaceOptions,
 ): Promise<string> => {
   const { client } = await authenticate(options);
-  return callPostgresRpc(client, 'supabash_create_workspace', decodeCreatedWorkspace);
+  return callPostgresRpc(
+    client,
+    'supabash_create_workspace',
+    decodeCreatedWorkspace,
+    {},
+    { outcomeUnknownOnTransportFailure: true },
+  );
 };
 
 export const openPostgresDelegated = async (
   options: OpenPostgresDelegatedOptions,
-): Promise<PostgresWorkspace> => {
+): Promise<DelegatedPostgresWorkspace> => {
   assertServiceRoleKey(options.serviceRoleKey);
   const claims = await verifyDelegatedCapabilityClaims({
     capability: options.capability,
@@ -65,6 +73,7 @@ export const openPostgresDelegated = async (
       'A delegated Postgres workspace open requires the read operation.',
     );
   }
+  assertExpectedOperations(claims.ops, options.expectedOperations);
 
   const client = createClient(options.supabaseUrl, options.serviceRoleKey, {
     auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
@@ -75,6 +84,7 @@ export const openPostgresDelegated = async (
     'supabash_exchange_capability',
     (value) => decodeDelegatedGrant(value, claims),
     { p_capability: options.capability },
+    { outcomeUnknownOnTransportFailure: true },
   );
   const backend = createPostgresBackend({
     client,
@@ -91,12 +101,43 @@ export const openPostgresDelegated = async (
     ...(options.observability !== undefined && { observability: options.observability }),
   });
   await consumeDelegatedCapabilityNonce(claims, options.verifier);
-  return guardWorkspaceWithCapabilities(
+  const actor = `delegated:${claims.sub}`;
+  const operations = Object.freeze([...claims.ops]);
+  return guardDelegatedPostgresWorkspace(
     workspace,
-    new Set(claims.ops),
-    `delegated:${claims.sub}`,
+    new Set(operations),
+    actor,
     claims.corr,
+    Object.freeze({
+      actor,
+      correlationId: claims.corr,
+      operations,
+      subject: claims.sub,
+      workspace: claims.workspace,
+    }),
   );
+};
+
+const assertExpectedOperations = (
+  actual: readonly DelegatedOperation[],
+  expected: OpenPostgresDelegatedOptions['expectedOperations'],
+): void => {
+  if (expected === undefined) {
+    return;
+  }
+  const actualSet = new Set(actual);
+  const expectedSet = new Set(expected);
+  if (
+    actualSet.size !== actual.length ||
+    expectedSet.size !== expected.length ||
+    actualSet.size !== expectedSet.size ||
+    [...actualSet].some((operation) => !expectedSet.has(operation))
+  ) {
+    throw new SupabashError(
+      'INVALID_CAPABILITY',
+      'Capability operations do not match the operations required by the caller.',
+    );
+  }
 };
 
 const assertServiceRoleKey = (key: string): void => {

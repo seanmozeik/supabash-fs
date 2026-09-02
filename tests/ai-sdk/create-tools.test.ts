@@ -36,6 +36,95 @@ describe('workspace AI SDK tools', () => {
     });
   });
 
+  test('shares one rooted and filtered filesystem view across every tool', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage());
+    await workspace.fs.mkdir('/memory/.private', { recursive: true });
+    await workspace.fs.writeFile('/memory/visible.md', 'visible\n');
+    await workspace.fs.writeFile('/memory/.private/secret.md', 'secret\n');
+    await workspace.fs.writeFile('/outside.md', 'outside\n');
+
+    const created = await createTools({
+      view: { hiddenRoots: ['/.private'], root: '/memory' },
+      workspace,
+    });
+    const listing = await invoke(created.tools['bash'], {
+      command: String.raw`find / -type f -name '*.md' | sort`,
+    });
+    const hiddenRead = await invoke(created.tools['bash'], { command: 'cat /.private/secret.md' });
+    const patch = await invoke(created.tools['apply_patch'], {
+      callId: 'call-hidden',
+      operation: { diff: '-secret\n+changed\n', path: '/.private/secret.md', type: 'update_file' },
+    });
+
+    expect({
+      hiddenExit: resultField(hiddenRead, 'exitCode'),
+      listing: resultField(listing, 'stdout'),
+      patch,
+      returnedOriginalWorkspace: created.workspace === workspace,
+    }).toStrictEqual({
+      hiddenExit: 1,
+      listing: '/visible.md\n',
+      patch: { output: 'Path does not exist.', status: 'failed' },
+      returnedOriginalWorkspace: true,
+    });
+    await expect(workspace.fs.readFile('/memory/.private/secret.md')).resolves.toBe('secret\n');
+  });
+
+  test('keeps the null device available inside a rooted tool view', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage());
+    await workspace.fs.mkdir('/memory');
+    const { tools } = await createTools({ view: { root: '/memory' }, workspace });
+
+    await expect(
+      invoke(tools['bash'], { command: "printf 'discarded' > /dev/null && printf ok" }),
+    ).resolves.toMatchObject({ exitCode: 0, stdout: 'ok' });
+  });
+
+  test('blocks reads and writes through an existing symlink outside the tool root', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage());
+    await workspace.fs.mkdir('/memory');
+    await workspace.fs.mkdir('/outside');
+    await workspace.fs.writeFile('/outside/secret.md', 'secret\n');
+    await workspace.fs.symlink('/outside', '/memory/escape');
+    const { tools } = await createTools({ view: { root: '/memory' }, workspace });
+
+    await expect(
+      invoke(tools['bash'], { command: 'cat /escape/secret.md' }),
+    ).resolves.toMatchObject({ exitCode: 1 });
+    await expect(
+      invoke(tools['bash'], { command: "printf 'no' > /escape/new.md" }),
+    ).resolves.toMatchObject({ exitCode: 126 });
+    await expect(workspace.fs.exists('/outside/new.md')).resolves.toBe(false);
+  });
+
+  test('executes command and path substitutions inside the scoped sandbox', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage());
+    await workspace.fs.mkdir('/memory');
+    await workspace.fs.writeFile('/memory/one.md', 'one\n');
+    await workspace.fs.writeFile('/memory/two.md', 'two\n');
+    const { tools } = await createTools({ view: { root: '/memory' }, workspace });
+
+    await expect(
+      invoke(tools['bash'], {
+        command:
+          "reader=$(printf cat); files=$(find / -type f -name '*.md' | sort); $reader $files",
+      }),
+    ).resolves.toMatchObject({ exitCode: 0, stdout: 'one\ntwo\n' });
+    await expect(
+      invoke(tools['bash'], {
+        command: String.raw`for file in $(find / -type f -name '*.md' | sort); do cat "$file"; done`,
+      }),
+    ).resolves.toMatchObject({ exitCode: 0, stdout: 'one\ntwo\n' });
+    await expect(
+      invoke(tools['bash'], { command: String.raw`cat <(printf 'native\n')` }),
+    ).resolves.toMatchObject({ exitCode: 0, stdout: 'native\n' });
+    await expect(
+      invoke(tools['bash'], {
+        command: String.raw`script=$(printf 'cat /one.md'); bash -c "$script"`,
+      }),
+    ).resolves.toMatchObject({ exitCode: 0, stdout: 'one\n' });
+  });
+
   test('loads view_image only when enabled and rejects a symlink', async () => {
     const workspace = await createStorageWorkspace(new MemoryStorage());
     await workspace.fs.writeFile('/pixel.png', pngBytes());

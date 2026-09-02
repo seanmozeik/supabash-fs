@@ -62,18 +62,21 @@ try {
     ),
     Bun.write(
       path.join(consumerDirectory, 'smoke.ts'),
-      `import { POSTGRES_INSTALL_SQL_URL, Supabash, SupabashError } from '@seanmozeik/supabash-fs';
+      `import { isRetryableSupabashError, isUnknownOutcomeSupabashError, POSTGRES_INSTALL_SQL_URL, Supabash, SupabashError } from '@seanmozeik/supabash-fs';
 import { createTools, type WorkspaceTools } from '@seanmozeik/supabash-fs/ai-sdk';
 import { InMemoryFs } from 'just-bash/browser';
 if (!Object.hasOwn(Supabash, 'open')) throw new Error('Missing Supabash.open.');
 if (!Object.hasOwn(Supabash, 'openPostgres')) throw new Error('Missing Supabash.openPostgres.');
 if (typeof createTools !== 'function') throw new Error('Missing createTools.');
 if (new SupabashError('STORAGE', 'test').code !== 'STORAGE') throw new Error('Bad error.');
+const retryable = new SupabashError('STORAGE', 'test', { outcomeUnknown: true, retryable: true });
+if (!isRetryableSupabashError(retryable)) throw new Error('Missing retryable error classifier.');
+if (!isUnknownOutcomeSupabashError(retryable)) throw new Error('Missing outcome classifier.');
 const installSql = await Deno.readTextFile(POSTGRES_INSTALL_SQL_URL);
 if (!installSql.includes('create schema supabash')) throw new Error('Missing Postgres install SQL.');
 const result: Promise<WorkspaceTools> | undefined = undefined;
 const workspace = { fs: new InMemoryFs() } as unknown as import('@seanmozeik/supabash-fs').Workspace;
-const bound = await createTools({ viewImage: { enabled: true }, workspace });
+const bound = await createTools({ view: { hiddenRoots: ['private'] }, viewImage: { enabled: true }, workspace });
 if (!Object.hasOwn(bound.tools, 'view_image')) throw new Error('Missing view_image.');
 void result;
 `,

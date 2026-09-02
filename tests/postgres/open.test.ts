@@ -46,6 +46,7 @@ describe('public Postgres workspace API', () => {
 
     const opened = await Supabash.openPostgresDelegated({
       capability,
+      expectedOperations: ['read'],
       fetch: api.fetch,
       serviceRoleKey: 'sb_secret_test',
       supabaseUrl: claims.origin,
@@ -61,13 +62,51 @@ describe('public Postgres workspace API', () => {
       exchange: api.calls[0]?.body,
       load: api.calls[1]?.body,
       nonceCalls: nonceStore.consume.mock.calls.length,
+      delegation: opened.delegation,
+      snapshot: opened.committedSnapshot(),
     }).toStrictEqual({
       backend: 'postgres',
       calls: ['/rest/v1/rpc/supabash_exchange_capability', '/rest/v1/rpc/supabash_load_workspace'],
       exchange: { p_capability: capability },
       load: { p_delegated_grant: 'opaque-grant', p_workspace_id: workspace },
       nonceCalls: 1,
+      delegation: {
+        actor: 'delegated:delegated-subject',
+        correlationId: 'corr-postgres',
+        operations: ['read'],
+        subject: 'delegated-subject',
+        workspace,
+      },
+      snapshot: { committedAt: null, documents: [], revision: null, transactionId: null },
     });
+    expect(Object.isFrozen(opened.delegation)).toBe(true);
+    expect(Object.isFrozen(opened.delegation.operations)).toBe(true);
+  });
+
+  test('rejects unexpected or duplicate operation sets before exchange', async () => {
+    const keys = await ed25519Pair();
+    const claims = postgresClaims();
+    const capability = await createDelegatedCapability({
+      claims,
+      keyId: 'k1',
+      privateKey: keys.privateKey,
+    });
+    const api = new FakePostgresApi(claims);
+    const common = {
+      capability,
+      fetch: api.fetch,
+      serviceRoleKey: 'sb_secret_test',
+      supabaseUrl: claims.origin,
+      verifier: verifierFor(keys.publicKey),
+    };
+
+    await expect(
+      Supabash.openPostgresDelegated({ ...common, expectedOperations: ['read', 'history'] }),
+    ).rejects.toMatchObject({ code: 'INVALID_CAPABILITY' });
+    await expect(
+      Supabash.openPostgresDelegated({ ...common, expectedOperations: ['read', 'read'] }),
+    ).rejects.toMatchObject({ code: 'INVALID_CAPABILITY' });
+    expect(api.calls).toStrictEqual([]);
   });
 
   test('does not consume the local nonce when the bound snapshot cannot open', async () => {

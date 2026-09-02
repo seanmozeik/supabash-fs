@@ -5,24 +5,17 @@ import { denyPolicy, type CommandInspectDecision, type PolicyReasonCode } from '
 export type ResolvedPath =
   | { readonly kind: 'path'; readonly value: string }
   | { readonly kind: 'glob'; readonly value: string }
+  | { readonly kind: 'dynamic'; readonly value: string }
   | { readonly kind: 'deny'; readonly decision: CommandInspectDecision };
-
-const HOME_PATH_PATTERN = /^(?:~|\$home|\$\{home\})(?:\/|$)/iu;
 
 export const resolveCommandWord = (word: CommandWord, cwd: string): ResolvedPath => {
   if (word.kind === 'dynamic') {
-    return deny('unsupported-syntax', 'Variable path expansion cannot be inspected safely.');
+    return { kind: 'dynamic', value: word.value };
   }
   return resolveCommandPath(word.value, cwd);
 };
 
 export const resolveCommandPath = (input: string, cwd: string): ResolvedPath => {
-  if (HOME_PATH_PATTERN.test(input)) {
-    return deny('path-out-of-root', 'Home-directory paths are outside the mounted root.');
-  }
-  if (input.includes('$') || input.includes('`')) {
-    return deny('unsupported-syntax', 'Variable path expansion cannot be inspected safely.');
-  }
   const joined = input.startsWith('/') ? input : joinRelative(cwd, input);
   if (isUnboundedGlob(input) || isUnboundedGlob(joined)) {
     return { kind: 'glob', value: joined };

@@ -171,6 +171,11 @@ Open it through the Postgres backend:
 const mounted = await Supabash.openPostgres({ publishableKey, request, supabaseUrl, workspace });
 ```
 
+`mounted.committedSnapshot()` returns a frozen, detached copy of the pinned
+database revision. Each document includes its stored body, metadata, canonical
+rendered content, hashes, and byte sizes. It does not include staged edits.
+After a successful commit, it describes the new committed revision.
+
 The API accepts no owner, root, prefix, or secondary slug. The caller supplies
 only the canonical workspace identifier. RLS decides whether the verified
 subject can use it.
@@ -289,6 +294,7 @@ const bound = await createTools({
   workspace,
   bash: { policyOptions: { allowNetwork: false } },
   applyPatch: true,
+  view: { root: '/memory', hiddenRoots: ['private'] },
   viewImage: { enabled: false },
 });
 
@@ -303,6 +309,13 @@ state that the root is already scoped. The model cannot select a bucket, user,
 prefix, access token, or storage client. The return value keeps the host
 workspace beside the AI SDK `ToolSet`; the workspace is never inserted into
 the agent-facing tool map.
+
+The optional `view` is shared by Bash, Apply Patch, and `view_image`. `root`
+presents one workspace subtree to the tools as `/`. `hiddenRoots` are relative
+to that presented root and do not appear in listings, glob results, or direct
+reads. The returned host workspace remains complete, so trusted code can still
+commit, inspect history, or work with private paths. Existing symbolic-link
+parents cannot escape the view.
 
 Optional `view_image` reads only from `workspace.fs`, allowlists image MIME
 types, enforces a byte limit before decoding, and rejects symbolic-link
@@ -362,13 +375,18 @@ const policy = createCommandPolicy({
 
 The default policy parses the complete command with Unbash. It can inspect
 ordinary pipelines, redirections, substitutions, literal variables, loops,
-conditionals, and grouped commands. It denies or bounds:
+conditionals, `find -exec`, process substitutions, and grouped commands.
+Command and path values that can only be known at execution time run normally
+inside Just Bash. Concrete nested commands remain visible to the policy, so a
+literal blocked command inside a substitution is still denied. The policy
+denies or bounds:
 
-- paths outside the virtual root or reserved `.supabash` segments
-- recursive operations whose target is the mounted root
+- statically resolved paths outside the virtual root or reserved `.supabash` segments
+- recursive operations whose statically resolved target is the mounted root
 - excessive command length, pipeline depth, or segment count
 - network commands when network is disabled
-- host-process escapes and unsupported syntax that cannot be inspected
+- host-process escapes
+- malformed syntax that cannot be parsed
 
 Do not treat command-string filtering as the security boundary.
 
@@ -403,7 +421,9 @@ await workspace.purge({ dryRun: true, maxRevisions: 50 });
 - `checkpoints` lists pinned markers with their labels and retention classes.
   `deleteCheckpoint` releases a marker so retention can remove its revision.
 - `commit` publishes staged changes and returns an immutable receipt.
-- `discard` drops uncommitted changes only.
+- `discard` drops uncommitted changes only. A clean read-only delegated
+  workspace can call it as a no-op; discarding staged changes requires write
+  permission.
 - `history` reads committed transactions with cursor pagination. An unknown
   cursor fails with `REVISION_NOT_FOUND` instead of restarting the page.
 - `diff` compares two committed revisions, a checkpoint, or staged state.
@@ -650,6 +670,7 @@ const capability = await createDelegatedCapability({
 
 const workspace = await Supabash.openPostgresDelegated({
   capability,
+  expectedOperations: ['read', 'write', 'commit', 'history'],
   serviceRoleKey,
   supabaseUrl,
   verifier,
@@ -660,6 +681,13 @@ const workspace = await Supabash.openPostgresDelegated({
 its pinned text snapshot into the staged filesystem. Add only the other
 operations that the job needs. A `restore` capability can plan a forward
 restore without also granting `history`.
+
+When `expectedOperations` is present, the signed capability must contain that
+exact set. Extra, missing, or duplicate operations fail before capability
+exchange or workspace load. The returned workspace exposes frozen verified
+`delegation` details: actor, correlation ID, operations, subject, and workspace.
+These details come from the verified claims, not from caller-supplied identity
+fields.
 
 Register each allowed Ed25519 public key in
 `supabash.capability_verifiers` as the database owner. The SQL verifies the
@@ -757,6 +785,17 @@ All package errors are `SupabashError` values:
 
 `SupabashError.path` identifies the affected virtual path when one is
 available. The original error is available through `error.cause`.
+
+`error.retryable` is true when Supabash has classified the cause as transient.
+`error.outcomeUnknown` is true when a transport failure may have hidden a
+successful durable mutation. Use the exported
+`isRetryableSupabashError(error)` and
+`isUnknownOutcomeSupabashError(error)` helpers instead of retrying every
+`STORAGE` error. Supabash does not retry automatically. When the outcome is
+unknown, repeat an operation only when it is idempotent or after reconciliation.
+For a Postgres commit, the workspace retains the same transaction and generated
+context across an immediate retry, so the database can return the existing
+result without creating a second logical commit.
 
 ## Runtime and package size
 

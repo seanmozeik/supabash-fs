@@ -15,13 +15,27 @@ interface PostgrestFailure {
   readonly message: string;
 }
 
+export interface PostgresRpcCallOptions {
+  readonly outcomeUnknownOnTransportFailure?: boolean;
+}
+
 export const callPostgresRpc = async <T>(
   client: PostgresRpcClient,
   name: string,
   decode: (value: unknown) => T,
   args: Readonly<Record<string, JsonValue>> = {},
+  options: PostgresRpcCallOptions = {},
 ): Promise<T> => {
-  const response: unknown = await client.rpc(name, args);
+  let response: unknown;
+  try {
+    response = await client.rpc(name, args);
+  } catch (cause) {
+    throw new SupabashError('STORAGE', 'Postgres RPC transport failed.', {
+      cause,
+      outcomeUnknown: options.outcomeUnknownOnTransportFailure ?? false,
+      retryable: true,
+    });
+  }
   const record = asUnknownRecord(response);
   if (record === undefined || !('data' in record) || !('error' in record)) {
     throw new SupabashError('STORAGE', 'Postgres RPC returned an invalid response.');

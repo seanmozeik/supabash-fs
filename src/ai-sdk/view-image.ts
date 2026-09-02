@@ -15,7 +15,7 @@ const IMAGE_TYPES: Readonly<Record<string, string>> = {
 };
 
 export const createViewImageTool = (
-  workspace: Workspace,
+  workspace: Pick<Workspace, 'fs'>,
   maxBytes = DEFAULT_MAX_IMAGE_BYTES,
 ): Tool => {
   assertPositiveLimit(maxBytes, 'viewImage.maxBytes');

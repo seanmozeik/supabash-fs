@@ -57,10 +57,13 @@ try {
     Bun.write(
       path.join(consumerDirectory, 'smoke.mjs'),
       `import { readFile } from 'node:fs/promises';
-import { POSTGRES_INSTALL_SQL_URL, Supabash, SupabashError } from '@seanmozeik/supabash-fs';
+import { isRetryableSupabashError, isUnknownOutcomeSupabashError, POSTGRES_INSTALL_SQL_URL, Supabash, SupabashError } from '@seanmozeik/supabash-fs';
 if (!Object.hasOwn(Supabash, 'open')) throw new Error('Missing Supabash.open.');
 if (!Object.hasOwn(Supabash, 'openPostgres')) throw new Error('Missing Supabash.openPostgres.');
 if (new SupabashError('STORAGE', 'test').code !== 'STORAGE') throw new Error('Bad error.');
+const retryable = new SupabashError('STORAGE', 'test', { outcomeUnknown: true, retryable: true });
+if (!isRetryableSupabashError(retryable)) throw new Error('Missing retryable error classifier.');
+if (!isUnknownOutcomeSupabashError(retryable)) throw new Error('Missing outcome classifier.');
 const installSql = await readFile(POSTGRES_INSTALL_SQL_URL, 'utf8');
 if (!installSql.includes('create schema supabash')) throw new Error('Missing Postgres install SQL.');
 `,
@@ -81,15 +84,20 @@ if (!installSql.includes('create schema supabash')) throw new Error('Missing Pos
     ),
     Bun.write(
       path.join(consumerDirectory, 'typecheck.ts'),
-      `import { Supabash, SupabashError, type PostgresWorkspace, type PostgresWorkspaceOptions, type SupabashOptions, type Workspace } from '@seanmozeik/supabash-fs';
+      `import { isRetryableSupabashError, Supabash, SupabashError, type DelegatedPostgresWorkspace, type PostgresWorkspace, type PostgresWorkspaceOptions, type PostgresWorkspaceSnapshot, type SupabashOptions, type Workspace } from '@seanmozeik/supabash-fs';
 declare const options: SupabashOptions;
 declare const postgresOptions: PostgresWorkspaceOptions;
+declare const delegated: DelegatedPostgresWorkspace;
 const workspace: Promise<Workspace> = Supabash.open(options);
 const postgresWorkspace: Promise<PostgresWorkspace> = Supabash.openPostgres(postgresOptions);
 const error = new SupabashError('STORAGE', 'test');
+const snapshot: PostgresWorkspaceSnapshot = delegated.committedSnapshot();
+const retryable: boolean = isRetryableSupabashError(error);
 void workspace;
 void postgresWorkspace;
 void error;
+void snapshot;
+void retryable;
 `,
     ),
     Bun.write(

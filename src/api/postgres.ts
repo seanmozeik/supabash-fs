@@ -1,7 +1,7 @@
 import type { WorkspaceLimits } from '../history/limits.js';
-import type { DelegatedVerifier } from './capability.js';
+import type { DelegatedOperation, DelegatedVerifier } from './capability.js';
 import type { Workspace, WorkspaceCapabilities } from './contracts.js';
-import type { TextDocumentCodec } from './document-codec.js';
+import type { DocumentMetadata, TextDocumentCodec } from './document-codec.js';
 import type { WorkspaceObservability } from './observability.js';
 
 export const POSTGRES_WORKSPACE_CAPABILITIES = Object.freeze({
@@ -16,6 +16,38 @@ export type PostgresWorkspaceCapabilities = typeof POSTGRES_WORKSPACE_CAPABILITI
 
 export interface PostgresWorkspace extends Workspace {
   readonly capabilities: PostgresWorkspaceCapabilities;
+  /** A detached copy of the committed base. Staged filesystem changes are excluded. */
+  readonly committedSnapshot: () => PostgresWorkspaceSnapshot;
+}
+
+export interface PostgresWorkspaceDocumentSnapshot {
+  readonly body: string;
+  readonly bodyByteSize: number;
+  readonly bodyHash: string;
+  readonly byteSize: number;
+  readonly content: string;
+  readonly contentHash: string;
+  readonly metadata: DocumentMetadata;
+  readonly path: string;
+}
+
+export interface PostgresWorkspaceSnapshot {
+  readonly committedAt: Date | null;
+  readonly documents: readonly PostgresWorkspaceDocumentSnapshot[];
+  readonly revision: string | null;
+  readonly transactionId: string | null;
+}
+
+export interface DelegatedPostgresWorkspaceInfo {
+  readonly actor: string;
+  readonly correlationId: string;
+  readonly operations: readonly DelegatedOperation[];
+  readonly subject: string;
+  readonly workspace: string;
+}
+
+export interface DelegatedPostgresWorkspace extends PostgresWorkspace {
+  readonly delegation: DelegatedPostgresWorkspaceInfo;
 }
 
 export interface PostgresWorkspaceOptions {
@@ -41,6 +73,8 @@ export interface CreatePostgresWorkspaceOptions {
 export interface OpenPostgresDelegatedOptions {
   readonly capability: string;
   readonly documentCodec?: TextDocumentCodec;
+  /** Require the signed capability to contain exactly this operation set. */
+  readonly expectedOperations?: readonly DelegatedOperation[];
   readonly fetch?: typeof globalThis.fetch;
   readonly limits?: WorkspaceLimits;
   readonly maxFileSystemBytes?: number;

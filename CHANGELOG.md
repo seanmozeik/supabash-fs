@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.1
+
+- Let Just Bash resolve command substitutions, path substitutions, loop values,
+  and process substitutions inside the scoped virtual filesystem. The command
+  policy still inspects concrete nested commands, including `find -exec`, and
+  blocks visible network, host, reserved-path, and destructive-root operations.
+- Add one shared tool-facing filesystem view for Bash, Apply Patch, and image
+  viewing. A host can present one workspace subtree as `/` and hide private
+  roots while retaining the complete host workspace for commit and history.
+- Expose detached committed Postgres snapshots. Staged edits remain separate
+  until commit.
+- Expose verified delegated-session details and let callers require an exact
+  capability operation set before a database exchange or workspace load.
+- Let a clean delegated read-only workspace discard as a no-op. Discarding
+  staged changes still requires write permission.
+- Normalize thrown Postgres transport failures as typed retryable errors. A
+  lost commit response also records that its durable outcome is unknown.
+
 ## 0.4.0
 
 - Parse Bash with Unbash before policy evaluation. Inspect pipelines,

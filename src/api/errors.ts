@@ -19,19 +19,31 @@ export type SupabashErrorCode =
 
 export interface SupabashErrorOptions {
   readonly cause?: unknown;
+  readonly outcomeUnknown?: boolean;
   readonly path?: string;
+  readonly retryable?: boolean;
 }
 
 export class SupabashError extends Error {
   readonly code: SupabashErrorCode;
+  readonly outcomeUnknown: boolean;
   readonly path?: string;
+  readonly retryable: boolean;
 
   constructor(code: SupabashErrorCode, message: string, options: SupabashErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'SupabashError';
     this.code = code;
+    this.outcomeUnknown = options.outcomeUnknown ?? false;
+    this.retryable = options.retryable ?? false;
     if (options.path !== undefined) {
       this.path = options.path;
     }
   }
 }
+
+export const isRetryableSupabashError = (error: unknown): error is SupabashError =>
+  error instanceof SupabashError && error.retryable;
+
+export const isUnknownOutcomeSupabashError = (error: unknown): error is SupabashError =>
+  error instanceof SupabashError && error.outcomeUnknown;

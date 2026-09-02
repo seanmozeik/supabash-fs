@@ -15,6 +15,23 @@ describe('default command policy', () => {
     await expect(policy.inspect('find /docs -name "*.md" | head')).resolves.toStrictEqual({
       allow: true,
     });
+    await expect(
+      policy.inspect(
+        String.raw`for f in $(find . -type f -name '*.md' | sort); do grep -n needle "$f"; done`,
+      ),
+    ).resolves.toStrictEqual({ allow: true });
+    await expect(
+      policy.inspect(String.raw`find . -type f -name '*.md' -exec sed -i 's/a/b/' {} \;`),
+    ).resolves.toStrictEqual({ allow: true });
+  });
+
+  test('allows lexical searches over generated file lists', async () => {
+    await expect(
+      policy.inspect(String.raw`grep -n '^description:\|^# ' notes.md other.md || true`),
+    ).resolves.toStrictEqual({ allow: true });
+    await expect(policy.inspect(String.raw`cat '$memory.md'`)).resolves.toStrictEqual({
+      allow: true,
+    });
   });
 
   test('denies root deletion, network, and reserved paths', async () => {
@@ -41,9 +58,46 @@ describe('default command policy', () => {
       allow: false,
       code: 'recursive-root',
     });
+    await expect(
+      policy.inspect(`bash -c 'cat /memory.md' > ../../outside.md`),
+    ).resolves.toMatchObject({ allow: false, code: 'path-out-of-root' });
+    await expect(policy.inspect(`cd /notes; bash -c 'rm -rf .'`)).resolves.toStrictEqual({
+      allow: true,
+    });
     await expect(policy.inspect('env FOO=bar sudo ls')).resolves.toMatchObject({
       allow: false,
       code: 'host-escape',
+    });
+  });
+
+  test('inspects commands nested in find -exec', async () => {
+    await expect(
+      policy.inspect(String.raw`find . -type f -exec curl https://example.com \;`),
+    ).resolves.toMatchObject({ allow: false, code: 'network-disabled' });
+    await expect(
+      policy.inspect(String.raw`find . -type f -exec sudo cat {} \;`),
+    ).resolves.toMatchObject({ allow: false, code: 'host-escape' });
+    await expect(
+      policy.inspect(String.raw`find . -type f -exec cat ../outside.md \;`),
+    ).resolves.toMatchObject({ allow: false, code: 'path-out-of-root' });
+    await expect(policy.inspect('find . -type f -exec sed {}')).resolves.toMatchObject({
+      allow: false,
+      code: 'unsupported-syntax',
+    });
+  });
+
+  test('keeps file operands after attached search option values', async () => {
+    await expect(policy.inspect('grep -m3 memory ../../outside.md')).resolves.toMatchObject({
+      allow: false,
+      code: 'path-out-of-root',
+    });
+    await expect(policy.inspect('grep -eMemory ../../outside.md')).resolves.toMatchObject({
+      allow: false,
+      code: 'path-out-of-root',
+    });
+    await expect(policy.inspect('grep -f../../patterns.txt memory.md')).resolves.toMatchObject({
+      allow: false,
+      code: 'path-out-of-root',
     });
   });
 

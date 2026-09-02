@@ -1,11 +1,12 @@
 import { parentVirtualPath } from '../core/path.js';
+import { pathArgs } from './command-paths.js';
 import {
   isRootTarget,
   resolveCommandPath,
   resolveCommandWord,
   type ResolvedPath,
 } from './paths.js';
-import { hasShortFlag, isFlag, type CommandSegment, type CommandWord } from './segments.js';
+import { hasShortFlag, type CommandSegment } from './segments.js';
 import {
   allowPolicy,
   denyPolicy,
@@ -25,6 +26,9 @@ export const checkSegmentPaths = async (
       return decision;
     }
   }
+  if (segment.words[0]?.kind === 'dynamic') {
+    return allowPolicy();
+  }
   for (const arg of pathArgs(segment)) {
     const decision = await checkResolved(resolveCommandWord(arg, cwd), cwd, options);
     if (!decision.allow) {
@@ -39,9 +43,6 @@ export const checkDestructive = (
   cwd: string,
   options: CommandPolicyOptions,
 ): CommandInspectDecision => {
-  if (segment.head === 'find' && segment.tokens.includes('-exec')) {
-    return denyPolicy('unsupported-syntax', 'find -exec cannot be inspected safely.');
-  }
   if (
     segment.head === 'rm' &&
     pathArgs(segment).some((arg) => isRootTarget(resolveCommandWord(arg, cwd), cwd))
@@ -79,6 +80,9 @@ export const nextWorkingDirectory = (
   }
   if (resolved.kind === 'glob') {
     return { decision: denyPolicy('unbounded-work', 'cd cannot use an unbounded glob.') };
+  }
+  if (resolved.kind === 'dynamic') {
+    return { cwd: DYNAMIC_CWD };
   }
   return { cwd: resolved.value };
 };
@@ -159,47 +163,8 @@ const hasRecursiveFlag = (segment: CommandSegment): boolean => {
   );
 };
 
-const findRoots = (segment: CommandSegment, cwd: string): readonly ResolvedPath[] => {
-  const roots: CommandWord[] = [];
-  for (const word of segment.words.slice(1)) {
-    if (word.value.startsWith('-')) {
-      break;
-    }
-    roots.push(word);
-  }
-  const checked = roots.length === 0 ? [{ kind: 'literal' as const, value: '.' }] : roots;
-  return checked.map((root) => resolveCommandWord(root, cwd));
-};
-
-const pathArgs = (segment: CommandSegment): readonly CommandWord[] => {
-  if (NON_PATH_HEADS.has(segment.head)) {
-    return [];
-  }
-  const words = positionalWords(segment);
-  if (segment.head === 'chmod') {
-    return words.filter((word) => !isMode(word.value));
-  }
-  if (segment.head === 'ln') {
-    return words;
-  }
-  if (segment.head === 'bash' || segment.head === 'sh') {
-    return words.filter((word) => word.value !== '-c' && !isFlag(word.value));
-  }
-  return words;
-};
-
-const positionalWords = (segment: CommandSegment): readonly CommandWord[] => {
-  const words: CommandWord[] = [];
-  let endOfFlags = false;
-  for (const word of segment.words.slice(1)) {
-    if (!endOfFlags && word.value === '--') {
-      endOfFlags = true;
-    } else if (endOfFlags || !isFlag(word.value)) {
-      words.push(word);
-    }
-  }
-  return words;
-};
+const findRoots = (segment: CommandSegment, cwd: string): readonly ResolvedPath[] =>
+  pathArgs(segment).map((root) => resolveCommandWord(root, cwd));
 
 const isPathRedirect = (operator: string): boolean =>
   operator === '>' ||
@@ -210,33 +175,4 @@ const isPathRedirect = (operator: string): boolean =>
   operator === '&>' ||
   operator === '&>>';
 
-const isMode = (value: string): boolean =>
-  /^[0-7]{3,4}$/u.test(value) || /[ugoa]*[+-=]/u.test(value);
-
-const NON_PATH_HEADS: ReadonlySet<string> = new Set([
-  'echo',
-  'printf',
-  'true',
-  'false',
-  'expr',
-  'seq',
-  'sleep',
-  'test',
-  '[',
-  'export',
-  'unset',
-  'set',
-  'shift',
-  'return',
-  'let',
-  'umask',
-  'pwd',
-  'whoami',
-  'hostname',
-  'date',
-  'clear',
-  'help',
-  'history',
-  'which',
-  'type',
-]);
+const DYNAMIC_CWD = '/.supabash-dynamic-cwd';

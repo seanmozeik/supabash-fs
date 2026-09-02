@@ -236,6 +236,13 @@ export class CommandVisitor {
       }
       return;
     }
+    if (name.kind === 'literal' && VARIABLE_NAME.test(name.value)) {
+      this.compound(
+        node.body,
+        new Map([...environment, [name.value, dynamicWord(name.value, 'loop')]]),
+      );
+      return;
+    }
     this.compound(node.body, new Map(environment));
   }
 
