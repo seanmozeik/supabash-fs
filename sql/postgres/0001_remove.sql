@@ -14,8 +14,14 @@ drop function if exists public.supabash_load_workspace(uuid, text);
 drop function if exists public.supabash_create_workspace();
 drop function if exists public.supabash_exchange_capability(text);
 drop function if exists public.supabash_revoke_capability_verifier(text);
-drop function if exists public.supabash_register_capability_verifier(text, text, text, text, text, integer, integer);
+drop function if exists public.supabash_register_capability_verifier(text, text, text, text, integer, integer);
 
+/*
+ * Deletes the vault secrets that this install created. The handler also
+ * catches `undefined_column`, which is what a 0.4.x install raises: its
+ * verifier table has `public_key` and no `secret_name`. Without that, removal
+ * aborted here and left the database half removed.
+ */
 do $secrets$
 begin
   if exists (
@@ -27,8 +33,13 @@ begin
     delete from vault.secrets
     where name in (select secret_name from supabash.capability_verifiers);
   end if;
-exception when undefined_table or undefined_function or insufficient_privilege then
-  raise notice 'Supabash capability secrets were left in the vault.';
+exception
+  when undefined_table
+    or undefined_column
+    or undefined_function
+    or insufficient_privilege
+  then
+    raise notice 'Supabash capability secrets were left in the vault.';
 end
 $secrets$;
 

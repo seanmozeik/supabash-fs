@@ -1,6 +1,6 @@
 # Postgres SQL assets
 
-Run `0001_install.sql` as the Supabase database owner. Run `0001_remove.sql` to remove all package-owned database objects. Removal does not remove the shared `pgcrypto` extension. The install needs `pgcrypto` and, at capability-exchange time, `supabase_vault`. It needs no `pgsodium` and no custom extension, so it replays on a stock Supabase PostgreSQL 17 project.
+`0001_install.sql` is a fresh install. There is no in-place upgrade from a 0.4.x install; remove the old one first. Run it as the Supabase database owner. Run `0001_remove.sql` to remove all package-owned database objects. Removal does not remove the shared `pgcrypto` extension. The install needs `pgcrypto` and, at capability-exchange time, `supabase_vault`. It needs no `pgsodium` and no custom extension, so it replays on a stock Supabase PostgreSQL 17 project.
 
 The install creates the private `supabash` schema and the `supabash_api` execution role. Authenticated and service-role callers have no table access. Authenticated workspace RPCs derive the owner only from the verified JWT subject. Service-role workspace RPCs require an opaque delegated grant that is bound to one owner, signed actor subject, workspace, operation set, correlation ID, and expiry.
 
@@ -8,7 +8,7 @@ The install creates the private `supabash` schema and the `supabash_api` executi
 
 A Postgres capability is a compact JWS signed with HMAC-SHA256. The database is its only verifier, so the signing secret is shared between the minting host and the database and is never given to the job that presents the capability. The secret lives in `supabase_vault`. `vault.decrypted_secrets` is not in a PostgREST-exposed schema and carries no grants to `anon`, `authenticated`, or `service_role`, so no REST caller can read it.
 
-Register a key as the database owner. The function generates the secret when you do not supply one and returns it exactly once:
+Register a key as the database owner. The database mints the secret and returns it exactly once, so no caller writes a secret into SQL statement text:
 
 ```sql
 select public.supabash_register_capability_verifier(
@@ -19,9 +19,11 @@ select public.supabash_register_capability_verifier(
 );
 ```
 
-Put the returned value in the minting host's environment, for example `supabase secrets set SUPABASH_CAPABILITY_SECRET=<value>`. Do not commit it. Rotating is the same call: it overwrites the vault secret in place and returns the new value. Adding a second `p_key_id` lets both secrets verify while hosts roll over. `select public.supabash_revoke_capability_verifier('k1')` deletes the row and its vault secret.
+Put the returned value in the minting host's environment, for example `supabase secrets set SUPABASH_CAPABILITY_SECRET=<value>`. Do not commit it. Rotating is the same call: it overwrites the vault secret in place and returns the new value. Adding a second `p_key_id` lets both secrets verify while hosts roll over. `select public.supabash_revoke_capability_verifier('k1')` deletes the row and its vault secret, so the owner needs `delete` on `vault.secrets`.
 
-Both functions are revoked from `public`, `anon`, `authenticated`, and `service_role`. Only the database owner can call them, from a migration or `psql`.
+Both functions are revoked from `public`, `anon`, `authenticated`, and `service_role`. Only the database owner can call them, from a migration or `psql`. `supabash.capability_verifiers` forces row level security, so the install also creates a policy that admits the installing owner by name. That keeps registration working on a stock PostgreSQL 17 owner that has no `bypassrls`.
+
+The real control over the secret is that the `vault` schema stays out of the PostgREST exposed schemas, so no REST caller can reach it at all. As a second line, the install refuses to run when `anon`, `authenticated`, or `service_role` holds any privilege on `vault.secrets`, `vault.decrypted_secrets`, `vault.create_secret`, or `vault.update_secret`, and it refuses to run when `supabase_vault` is absent.
 
 `supabash_exchange_capability` accepts a compact `HS256` JWS with schema version 3 and these claims: `aud`, `backend: "postgres"`, `corr`, `exp`, `iat`, `iss`, `nonce`, `ops`, `origin`, `sub`, `sv: 3`, and `workspace`. It consumes the nonce and returns one opaque short-lived grant. The database stores only the grant hash.
 

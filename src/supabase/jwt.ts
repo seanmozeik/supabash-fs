@@ -1,3 +1,5 @@
+import { SupabashError } from '../api/errors.js';
+
 export const jwtRole = (token: string): string | undefined => {
   const [, payload] = token.split('.');
   if (payload === undefined) {
@@ -19,3 +21,14 @@ export const decodeBase64Url = (value: string): string => {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
+
+/** Delegated access needs a trusted service-role credential, never a user token. */
+export const assertServiceRoleKey = (key: string): void => {
+  if (key.startsWith('sb_secret_') || jwtRole(key) === 'service_role') {
+    return;
+  }
+  throw new SupabashError(
+    'AUTHORIZATION',
+    'Delegated access requires a trusted service-role credential.',
+  );
+};

@@ -25,14 +25,8 @@ import {
   createDelegatedCapability as signDelegatedCapability,
   createPostgresDelegatedCapability as signPostgresDelegatedCapability,
 } from './capability/create.js';
-import {
-  generateCapabilitySecret as newCapabilitySecret,
-  importCapabilitySecret as loadCapabilitySecret,
-} from './capability/secret.js';
-import {
-  verifyDelegatedCapability as checkDelegatedCapability,
-  verifyPostgresDelegatedCapability as checkPostgresDelegatedCapability,
-} from './capability/verify.js';
+import { importCapabilitySecret as loadCapabilitySecret } from './capability/secret.js';
+import { verifyDelegatedCapability as checkDelegatedCapability } from './capability/verify.js';
 import { createWorkspaceFileSystemView as createFileSystemView } from './core/filesystem-view.js';
 import {
   DEFAULT_MAX_DIFF_PREVIEW_BYTES as defaultMaxDiffPreviewBytes,
@@ -67,9 +61,7 @@ export type {
   DelegatedVerifier,
   OpenDelegatedOptions,
   PostgresDelegatedCapabilityClaims,
-  PostgresDelegatedVerifier,
   VerifyDelegatedCapabilityInput,
-  VerifyPostgresDelegatedCapabilityInput,
 } from './api/capability.js';
 export type {
   CommitReceipt,
@@ -183,10 +175,8 @@ export const createCommandPolicy = createWorkspaceCommandPolicy;
 export const createWorkspaceFileSystemView = createFileSystemView;
 export const createDelegatedCapability = signDelegatedCapability;
 export const createPostgresDelegatedCapability = signPostgresDelegatedCapability;
-export const generateCapabilitySecret = newCapabilitySecret;
 export const importCapabilitySecret = loadCapabilitySecret;
 export const verifyDelegatedCapability = checkDelegatedCapability;
-export const verifyPostgresDelegatedCapability = checkPostgresDelegatedCapability;
 export const createYamlFrontmatterCodec = yamlFrontmatterCodec;
 export const plainTextDocumentCodec = textDocumentCodec;
 export const renderStoredDocument = renderWorkspaceDocument;

@@ -5,7 +5,7 @@ import type { Workspace } from '../api/contracts.js';
 import { SupabashError } from '../api/errors.js';
 import { sha256 } from '../core/hash.js';
 import { createStorageWorkspace } from '../core/workspace.js';
-import { jwtRole } from '../supabase/jwt.js';
+import { assertServiceRoleKey } from '../supabase/jwt.js';
 import { createSupabaseStorage } from '../supabase/storage.js';
 import { guardWorkspace } from './guard.js';
 import { consumeDelegatedCapabilityNonce, verifyStorageCapabilityClaims } from './verify.js';
@@ -41,14 +41,4 @@ export const openDelegated = async (options: OpenDelegatedOptions): Promise<Work
   });
   await consumeDelegatedCapabilityNonce(claims, options.verifier);
   return guardWorkspace(workspace, new Set(claims.ops), `delegated:${claims.sub}`, claims.corr);
-};
-
-const assertServiceRoleKey = (key: string): void => {
-  if (key.startsWith('sb_secret_') || jwtRole(key) === 'service_role') {
-    return;
-  }
-  throw new SupabashError(
-    'AUTHORIZATION',
-    'Delegated access requires a trusted service-role credential.',
-  );
 };

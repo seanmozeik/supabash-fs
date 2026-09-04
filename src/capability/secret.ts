@@ -4,9 +4,10 @@ const CAPABILITY_SECRET_BYTES = 32;
 const BASE64URL = /^[A-Za-z0-9_-]+$/u;
 
 /**
- * Imports the shared Postgres capability secret. The secret is the same
- * base64url value stored in `supabase_vault` and read by
- * `public.supabash_exchange_capability`.
+ * Imports the shared Postgres capability secret. The secret is the base64url
+ * value that `public.supabash_register_capability_verifier` returned once and
+ * that the database reads back from `supabase_vault`. Only the minting host
+ * holds it. A delegate that presents a capability never needs it.
  */
 export const importCapabilitySecret = async (secret: string): Promise<CryptoKey> => {
   const bytes = decodeSecret(secret);
@@ -20,30 +21,23 @@ export const importCapabilitySecret = async (secret: string): Promise<CryptoKey>
   return key;
 };
 
-/** Generates one new capability secret for a database owner to store in the vault. */
-export const generateCapabilitySecret = (): string => {
-  const bytes = crypto.getRandomValues(new Uint8Array(CAPABILITY_SECRET_BYTES));
-  let binary = '';
-  for (const byte of bytes) {
-    binary += String.fromCodePoint(byte);
-  }
-  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
-};
-
 const decodeSecret = (secret: string): Uint8Array<ArrayBuffer> => {
   if (!BASE64URL.test(secret)) {
+    throw invalid('A capability secret must be base64url without padding.');
+  }
+  const padded = secret.replaceAll('-', '+').replaceAll('_', '/');
+  let binary: string;
+  try {
+    binary = atob(padded.padEnd(Math.ceil(padded.length / 4) * 4, '='));
+  } catch (error) {
     throw new SupabashError(
       'INVALID_CAPABILITY',
       'A capability secret must be base64url without padding.',
+      { cause: error },
     );
   }
-  const padded = secret.replaceAll('-', '+').replaceAll('_', '/');
-  const binary = atob(padded.padEnd(Math.ceil(padded.length / 4) * 4, '='));
   if (binary.length < CAPABILITY_SECRET_BYTES) {
-    throw new SupabashError(
-      'INVALID_CAPABILITY',
-      `A capability secret must decode to at least ${CAPABILITY_SECRET_BYTES} bytes.`,
-    );
+    throw invalid(`A capability secret must decode to at least ${CAPABILITY_SECRET_BYTES} bytes.`);
   }
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
@@ -51,3 +45,6 @@ const decodeSecret = (secret: string): Uint8Array<ArrayBuffer> => {
   }
   return bytes;
 };
+
+const invalid = (message: string): SupabashError =>
+  new SupabashError('INVALID_CAPABILITY', message);

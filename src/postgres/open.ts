@@ -13,7 +13,7 @@ import { createBackendWorkspace } from '../backend/workspace.js';
 import { guardDelegatedPostgresWorkspace } from '../capability/guard.js';
 import { inspectPostgresCapability } from '../capability/inspect.js';
 import { authenticate } from '../supabase/auth.js';
-import { jwtRole } from '../supabase/jwt.js';
+import { assertServiceRoleKey } from '../supabase/jwt.js';
 import { decodeCreatedWorkspace, decodeDelegatedGrant } from './access.js';
 import { createPostgresBackend } from './backend.js';
 import { callPostgresRpc } from './rpc.js';
@@ -58,6 +58,12 @@ export const openPostgresDelegated = async (
   if (presented.origin !== options.supabaseUrl) {
     throw new SupabashError('INVALID_CAPABILITY', 'Capability origin does not match open options.');
   }
+  /*
+   * The presented claims are unverified, so this only refuses an obviously
+   * wrong request before the round trip. `decodeDelegatedGrant` then requires
+   * the granted operation set to equal the presented one, so the grant that
+   * this function returns has passed the same check.
+   */
   assertOpenableOperations(presented.ops, options.expectedOperations);
 
   const client = createClient(options.supabaseUrl, options.serviceRoleKey, {
@@ -71,7 +77,6 @@ export const openPostgresDelegated = async (
     { p_capability: options.capability },
     { outcomeUnknownOnTransportFailure: true },
   );
-  assertOpenableOperations(grant.operations, options.expectedOperations);
   const backend = createPostgresBackend({
     client,
     delegatedGrant: grant.delegatedGrant,
@@ -129,14 +134,4 @@ const assertOpenableOperations = (
       'Capability operations do not match the operations required by the caller.',
     );
   }
-};
-
-const assertServiceRoleKey = (key: string): void => {
-  if (key.startsWith('sb_secret_') || jwtRole(key) === 'service_role') {
-    return;
-  }
-  throw new SupabashError(
-    'AUTHORIZATION',
-    'Delegated access requires a trusted service-role credential.',
-  );
 };

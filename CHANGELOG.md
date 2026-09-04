@@ -3,7 +3,9 @@
 ## 0.5.0
 
 Breaking. The Postgres install asset no longer needs `pgsodium`, and Postgres
-capabilities use a new signature scheme and schema version.
+capabilities use a new signature scheme and schema version. `0001_install.sql`
+is a fresh install of the Postgres asset with no upgrade path from 0.4.x;
+remove the old install first.
 
 - Verify Postgres capabilities with HMAC-SHA256 through `extensions.hmac`
   instead of `pgsodium.crypto_sign_verify_detached`. The install asset creates
@@ -32,17 +34,45 @@ capabilities use a new signature scheme and schema version.
   blind so it leaks no prefix. This boundary is tighter than the one it
   replaces, which handed the verification key to `supabash_api`.
 - Add `public.supabash_register_capability_verifier` and
-  `public.supabash_revoke_capability_verifier`. Registration generates the
-  secret, stores it in the vault, and returns it once. Both are revoked from
-  `public`, `anon`, `authenticated`, and `service_role`, so only the database
-  owner can call them, from a migration or `psql`. Removal deletes the vault
-  secrets it created.
+  `public.supabash_revoke_capability_verifier`. The database mints the secret,
+  stores it in the vault, and returns it once, so no caller writes a secret
+  into SQL statement text. Every argument is validated by the check
+  constraints on `supabash.capability_verifiers`, and the row is written before
+  the vault secret so a rejected argument leaves no orphan secret. Both
+  functions are revoked from `public`, `anon`, `authenticated`, and
+  `service_role`, so only the database owner can call them, from a migration or
+  `psql`. Removal deletes the vault secrets it created.
+- Create a row level security policy that admits the installing owner on
+  `supabash.capability_verifiers`. The table forces row level security, so
+  without that policy registration needed an owner with `bypassrls`. It now
+  works on a stock PostgreSQL 17 owner. `supabash_api` is not a member of the
+  owner role, so the exchange path is unchanged.
+- Keep a capability nonce row until its expiry plus the verifier clock skew.
+  The exchange accepts a capability until `exp` plus the skew, so a row that
+  expired at `exp` was purged by a later call and let the same capability mint
+  a second grant inside that window.
+- Refuse to install when `supabase_vault` is absent, with a message that names
+  the extension. Refuse to install when `anon`, `authenticated`, or
+  `service_role` holds any privilege on `vault.secrets`,
+  `vault.decrypted_secrets`, `vault.create_secret`, or `vault.update_secret`.
+  The real control is that the `vault` schema stays out of the PostgREST
+  exposed schemas; the install check is a second line.
+- Add live proofs for the security claims: no PostgREST role holds any
+  privilege on the registration functions, on
+  `supabash.capability_signature_valid`, or on the vault objects; the service
+  role cannot call either registration RPC; the exchange refuses an
+  unregistered secret, an unsupported `sv`, an `EdDSA` header, an expired
+  capability, and a replayed nonce; and revocation removes both the row and its
+  vault secret.
+- Tolerate a 0.4.x layout in `0001_remove.sql`. Its vault cleanup reads
+  `secret_name`, which a 0.4.x install does not have, so the handler now also
+  catches `undefined_column` and removal no longer aborts half way.
 - Raise the Postgres capability schema version to 3 and replace
   `supabash.capability_verifiers.public_key` with `secret_name`. A schema
   version 2 capability and an Ed25519 verifier row are no longer accepted.
-- Add `createPostgresDelegatedCapability`, `importCapabilitySecret`, and
-  `generateCapabilitySecret`. `createDelegatedCapability` now signs only
-  storage capabilities and rejects Postgres claims.
+- Add `createPostgresDelegatedCapability` and `importCapabilitySecret`.
+  `createDelegatedCapability` now signs only storage capabilities and rejects
+  Postgres claims.
 - Remove `verifier` from `OpenPostgresDelegatedOptions`. A delegate holds no
   verification key, so `openPostgresDelegated` takes the delegation details
   from the grant the database minted, including a new `actorSubject` field on
@@ -52,9 +82,15 @@ capabilities use a new signature scheme and schema version.
   path; the database nonce table is authoritative.
 - Keep Ed25519 for storage capabilities. Their verifier is the delegate itself,
   so it must hold a public key and must not be able to mint.
-- Type `verifyPostgresDelegatedCapability` against the new
-  `PostgresDelegatedVerifier`, which carries `secretKeys`. Only a party that
-  already holds the shared secret can verify a Postgres capability locally.
+- Remove `verifyPostgresDelegatedCapability` and `generateCapabilitySecret`.
+  The database is the only verifier of a Postgres capability and the only
+  minter of the secret, so neither had a caller that was not a test. Postgres
+  capability tests now check the minted artifact against WebCrypto directly
+  rather than against the package's own verifier.
+- Share one delegated operation predicate and one workspace identifier pattern
+  across the capability and Postgres modules, and keep the service-role
+  credential check in one module. The two workspace patterns disagreed: one
+  accepted UUID versions 1 to 5 and the other 1 to 8. Both now accept 1 to 8.
 
 ## 0.4.2
 

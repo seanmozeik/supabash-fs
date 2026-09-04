@@ -4,13 +4,10 @@ import {
   type AnyDelegatedCapabilityClaims,
   type CapabilityNonceStore,
   type DelegatedCapabilityClaims,
-  type PostgresDelegatedCapabilityClaims,
   type VerifyDelegatedCapabilityInput,
-  type VerifyPostgresDelegatedCapabilityInput,
 } from '../api/capability.js';
 import { SupabashError } from '../api/errors.js';
 import { assertClaimSchema, parseClaims } from './claims.js';
-import { assertCapabilitySecretKey } from './create.js';
 import { jwsKeyId, peekCompactJwsHeader, verifyCompactJws } from './jws.js';
 
 interface NonceHolder {
@@ -36,47 +33,17 @@ export const verifyDelegatedCapability = async (
   return claims;
 };
 
-export const verifyPostgresDelegatedCapability = async (
-  input: VerifyPostgresDelegatedCapabilityInput,
-): Promise<PostgresDelegatedCapabilityClaims> => {
-  const claims = await verifyPostgresCapabilityClaims(input);
-  await consumeDelegatedCapabilityNonce(claims, input.verifier);
-  return claims;
-};
-
 export const verifyStorageCapabilityClaims = (
   input: VerifyDelegatedCapabilityInput,
 ): Promise<DelegatedCapabilityClaims> =>
   guard(async () => {
     const claims = await verifyInner(
-      'EdDSA',
       input.capability,
       (keyId) => publicKeyFor(input.verifier.publicKeys[keyId]),
       input.verifier,
     );
     if ('backend' in claims) {
       throw new SupabashError('INVALID_CAPABILITY', 'Capability backend is not storage.');
-    }
-    return claims;
-  });
-
-/**
- * Verifies a Postgres capability locally. Only the minting host holds the
- * shared secret. A delegate that presents a capability must let
- * `public.supabash_exchange_capability` verify it inside the database.
- */
-export const verifyPostgresCapabilityClaims = (
-  input: VerifyPostgresDelegatedCapabilityInput,
-): Promise<PostgresDelegatedCapabilityClaims> =>
-  guard(async () => {
-    const claims = await verifyInner(
-      'HS256',
-      input.capability,
-      (keyId) => secretKeyFor(input.verifier.secretKeys[keyId]),
-      input.verifier,
-    );
-    if (!('backend' in claims)) {
-      throw new SupabashError('INVALID_CAPABILITY', 'Capability backend is not Postgres.');
     }
     return claims;
   });
@@ -115,14 +82,13 @@ const guard = async <T>(work: () => Promise<T>): Promise<T> => {
 };
 
 const verifyInner = async (
-  algorithm: 'EdDSA' | 'HS256',
   capability: string,
   keyFor: (keyId: string) => CryptoKey,
   verifier: Audience & FreshnessBounds,
 ): Promise<AnyDelegatedCapabilityClaims> => {
-  const keyId = jwsKeyId(peekCompactJwsHeader(capability), algorithm);
-  const { header, payload } = await verifyCompactJws(algorithm, capability, keyFor(keyId));
-  if (jwsKeyId(header, algorithm) !== keyId) {
+  const keyId = jwsKeyId(peekCompactJwsHeader(capability), 'EdDSA');
+  const { header, payload } = await verifyCompactJws('EdDSA', capability, keyFor(keyId));
+  if (jwsKeyId(header, 'EdDSA') !== keyId) {
     throw new SupabashError('INVALID_CAPABILITY', 'Capability key id is unknown.');
   }
   const claims = parseClaims(payload);
@@ -136,14 +102,6 @@ const publicKeyFor = (key: CryptoKey | undefined): CryptoKey => {
   if (key?.type !== 'public') {
     throw new SupabashError('INVALID_CAPABILITY', 'Capability key id is unknown.');
   }
-  return key;
-};
-
-const secretKeyFor = (key: CryptoKey | undefined): CryptoKey => {
-  if (key === undefined) {
-    throw new SupabashError('INVALID_CAPABILITY', 'Capability key id is unknown.');
-  }
-  assertCapabilitySecretKey(key);
   return key;
 };
 

@@ -15,6 +15,27 @@ export type DelegatedOperation =
   | 'restore'
   | 'write';
 
+/** One canonical Postgres workspace identifier. Accepts UUID versions 1 to 8. */
+export const WORKSPACE_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+export const isDelegatedOperation = (value: string): value is DelegatedOperation => {
+  switch (value) {
+    case 'checkpoint':
+    case 'commit':
+    case 'history':
+    case 'purge':
+    case 'read':
+    case 'restore':
+    case 'write': {
+      return true;
+    }
+    default: {
+      return false;
+    }
+  }
+};
+
 export interface DelegatedCapabilityClaims {
   readonly aud: string;
   readonly bucket: string;
@@ -81,28 +102,9 @@ export interface DelegatedVerifier {
   readonly publicKeys: Readonly<Record<string, CryptoKey>>;
 }
 
-/**
- * Only a party that already holds the shared capability secret can verify a
- * Postgres capability locally. A delegate must let the database verify it.
- */
-export interface PostgresDelegatedVerifier {
-  readonly audience: string;
-  readonly clockSkewSeconds?: number;
-  readonly issuer: string;
-  readonly maxLifetimeSeconds?: number;
-  readonly nonceStore?: CapabilityNonceStore;
-  readonly origin: string;
-  readonly secretKeys: Readonly<Record<string, CryptoKey>>;
-}
-
 export interface VerifyDelegatedCapabilityInput {
   readonly capability: string;
   readonly verifier: DelegatedVerifier;
-}
-
-export interface VerifyPostgresDelegatedCapabilityInput {
-  readonly capability: string;
-  readonly verifier: PostgresDelegatedVerifier;
 }
 
 export interface OpenDelegatedOptions {

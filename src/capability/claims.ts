@@ -1,6 +1,8 @@
 import {
   CAPABILITY_SCHEMA_VERSION,
+  isDelegatedOperation,
   POSTGRES_CAPABILITY_SCHEMA_VERSION,
+  WORKSPACE_ID_PATTERN,
   type AnyDelegatedCapabilityClaims,
   type DelegatedOperation,
 } from '../api/capability.js';
@@ -51,7 +53,7 @@ export const parseClaims = (value: unknown): AnyDelegatedCapabilityClaims => {
 
 export const assertClaimSchema = (claims: AnyDelegatedCapabilityClaims): void => {
   if ('backend' in claims) {
-    if (!SAFE_WORKSPACE.test(claims.workspace)) {
+    if (!WORKSPACE_ID_PATTERN.test(claims.workspace)) {
       throw invalid('Capability workspace is not a safe identifier.');
     }
     return;
@@ -67,36 +69,16 @@ export const assertClaimSchema = (claims: AnyDelegatedCapabilityClaims): void =>
   }
 };
 
-const SAFE_WORKSPACE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-
 const parseOps = (value: unknown): readonly DelegatedOperation[] => {
   if (!Array.isArray(value) || value.length === 0) {
     throw invalid('Capability operations must be a non-empty array.');
   }
   return value.map((entry) => {
-    if (typeof entry !== 'string' || !isOperation(entry)) {
+    if (typeof entry !== 'string' || !isDelegatedOperation(entry)) {
       throw invalid('Capability contains an unsupported operation.');
     }
     return entry;
   });
-};
-
-const isOperation = (value: string): value is DelegatedOperation => {
-  switch (value) {
-    case 'checkpoint':
-    case 'commit':
-    case 'history':
-    case 'purge':
-    case 'read':
-    case 'restore':
-    case 'write': {
-      return true;
-    }
-    default: {
-      return false;
-    }
-  }
 };
 
 const asObject = (value: unknown): Record<string, unknown> => {

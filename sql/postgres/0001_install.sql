@@ -4,6 +4,24 @@ begin;
 
 create extension if not exists pgcrypto with schema extensions;
 
+do $vault_present$
+begin
+  if not exists (
+    select 1 from pg_catalog.pg_extension where extname = 'supabase_vault'
+  ) or not exists (
+    select 1
+    from pg_catalog.pg_class c
+    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'vault' and c.relname = 'decrypted_secrets'
+  ) then
+    raise exception using
+      errcode = 'undefined_object',
+      message = 'Supabash needs the supabase_vault extension.',
+      hint = 'Supabase projects ship it. Run "create extension supabase_vault;" as the database owner, then run this install again.';
+  end if;
+end
+$vault_present$;
+
 do $role$
 begin
   if not exists (select 1 from pg_catalog.pg_roles where rolname = 'supabash_api') then
@@ -402,7 +420,7 @@ create table supabash.checkpoints (
 );
 
 create table supabash.capability_verifiers (
-  key_id text primary key check (key_id <> '' and octet_length(key_id) <= 255),
+  key_id text primary key check (key_id ~ '^[A-Za-z0-9._-]{1,235}$'),
   secret_name text not null check (secret_name ~ '^supabash_capability_[A-Za-z0-9._-]{1,235}$'),
   issuer text not null check (issuer <> '' and octet_length(issuer) <= 2048),
   audience text not null check (audience <> '' and octet_length(audience) <= 2048),
@@ -523,6 +541,21 @@ create policy checkpoint_owner on supabash.checkpoints to supabash_api
   with check (supabash.owns_workspace(workspace_id));
 create policy capability_verifier_exchange on supabash.capability_verifiers
   for select to supabash_api using (supabash.request_role() = 'service_role');
+/*
+ * `capability_verifiers` forces row level security, so the owner is subject to
+ * it too. Key registration is an owner-only operation, so admit the installing
+ * owner by name. `supabash_api` is not a member of that role, so this policy
+ * does not widen the exchange path.
+ */
+do $verifier_owner_policy$
+begin
+  execute format(
+    'create policy capability_verifier_owner on supabash.capability_verifiers'
+      || ' to %I using (true) with check (true)',
+    current_user
+  );
+end
+$verifier_owner_policy$;
 create policy capability_nonce_exchange on supabash.capability_nonces
   to supabash_api
   using (supabash.request_role() = 'service_role')
@@ -871,8 +904,16 @@ begin
   v_nonce := jsonb_build_array(v_verifier.issuer, v_payload ->> 'nonce')::text;
   v_nonce_hash := extensions.digest(convert_to(v_nonce, 'UTF8'), 'sha256');
   begin
+    /*
+     * The exchange accepts a capability until exp plus the clock skew, so the
+     * nonce row must survive that whole window. A shorter row would be purged
+     * at the top of a later call and let the same capability mint twice.
+     */
     insert into supabash.capability_nonces (nonce_hash, expires_at)
-    values (v_nonce_hash, to_timestamp(v_exp));
+    values (
+      v_nonce_hash,
+      to_timestamp(v_exp) + make_interval(secs => v_verifier.clock_skew_seconds)
+    );
   exception when unique_violation then
     raise exception using errcode = '22023', message = 'SUPABASH_CAPABILITY_NONCE_REUSED';
   end;
@@ -901,12 +942,18 @@ begin
 end
 $function$;
 
+/*
+ * Registers or rotates one capability key and returns the new secret exactly
+ * once. The database mints the secret, so no caller ever writes it into SQL
+ * statement text. Every argument is validated by the check constraints on
+ * `supabash.capability_verifiers`, and the row is written before the vault
+ * secret so a rejected argument leaves no orphan secret behind.
+ */
 create function public.supabash_register_capability_verifier(
   p_key_id text,
   p_issuer text,
   p_audience text,
   p_origin text,
-  p_secret text default null,
   p_clock_skew_seconds integer default 60,
   p_max_lifetime_seconds integer default 900
 )
@@ -916,23 +963,11 @@ volatile
 set search_path = pg_catalog, supabash, extensions
 as $function$
 declare
-  v_secret_name text := 'supabash_capability_' || p_key_id;
-  v_secret text := coalesce(p_secret, supabash.base64url_encode(extensions.gen_random_bytes(32)));
+  v_secret_name text;
+  v_secret text := supabash.base64url_encode(extensions.gen_random_bytes(32));
   v_secret_id uuid;
 begin
-  if coalesce(p_key_id, '') = '' or v_secret_name !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$' then
-    raise exception using errcode = '22023', message = 'SUPABASH_INVALID_CAPABILITY_KEY_ID';
-  end if;
-  if octet_length(supabash.base64url_decode(v_secret)) < 32 then
-    raise exception using errcode = '22023', message = 'SUPABASH_INVALID_CAPABILITY_SECRET';
-  end if;
-
-  select s.id into v_secret_id from vault.secrets s where s.name = v_secret_name;
-  if v_secret_id is null then
-    perform vault.create_secret(v_secret, v_secret_name);
-  else
-    perform vault.update_secret(v_secret_id, v_secret);
-  end if;
+  v_secret_name := 'supabash_capability_' || p_key_id;
 
   insert into supabash.capability_verifiers (
     key_id, secret_name, issuer, audience, origin, clock_skew_seconds, max_lifetime_seconds
@@ -948,6 +983,13 @@ begin
     clock_skew_seconds = excluded.clock_skew_seconds,
     max_lifetime_seconds = excluded.max_lifetime_seconds,
     active = true;
+
+  select s.id into v_secret_id from vault.secrets s where s.name = v_secret_name;
+  if v_secret_id is null then
+    perform vault.create_secret(v_secret, v_secret_name);
+  else
+    perform vault.update_secret(v_secret_id, v_secret);
+  end if;
 
   return v_secret;
 end
@@ -1976,7 +2018,7 @@ alter function public.supabash_purge(uuid, integer, bigint, boolean, text) owner
 revoke create on schema public from supabash_api;
 
 revoke all on function public.supabash_register_capability_verifier(
-  text, text, text, text, text, integer, integer
+  text, text, text, text, integer, integer
 ) from public, anon, authenticated, service_role;
 revoke all on function public.supabash_revoke_capability_verifier(text)
   from public, anon, authenticated, service_role;
@@ -2004,6 +2046,53 @@ grant execute on function public.supabash_checkpoints(uuid, text) to authenticat
 grant execute on function public.supabash_delete_checkpoint(uuid, uuid, text) to authenticated, service_role;
 grant execute on function public.supabash_diff(uuid, jsonb, jsonb, text[], integer, jsonb, text) to authenticated, service_role;
 grant execute on function public.supabash_purge(uuid, integer, bigint, boolean, text) to authenticated, service_role;
+
+/*
+ * The real control is that the `vault` schema stays out of the PostgREST
+ * exposed schemas, so no REST caller can reach it at all. This check is the
+ * second line: it refuses to install when `anon`, `authenticated`, or
+ * `service_role` holds any privilege that would let it read or write the
+ * capability secret directly.
+ */
+do $vault_privileges$
+declare
+  v_exposed text;
+begin
+  select string_agg(distinct exposure.finding, ', ' order by exposure.finding)
+  into v_exposed
+  from (
+    select rest_role.rolname || ' may execute ' || n.nspname || '.' || p.proname as finding
+    from pg_catalog.pg_proc p
+    join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+    cross join (
+      select rolname from pg_catalog.pg_roles
+      where rolname in ('anon', 'authenticated', 'service_role')
+    ) rest_role
+    where n.nspname = 'vault'
+      and p.proname in ('create_secret', 'update_secret')
+      and pg_catalog.has_function_privilege(rest_role.rolname, p.oid, 'execute')
+    union all
+    select rest_role.rolname || ' may ' || grant_kind.privilege || ' ' || n.nspname
+      || '.' || c.relname
+    from pg_catalog.pg_class c
+    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+    cross join (
+      select rolname from pg_catalog.pg_roles
+      where rolname in ('anon', 'authenticated', 'service_role')
+    ) rest_role
+    cross join (values ('select'), ('insert'), ('update'), ('delete')) grant_kind(privilege)
+    where n.nspname = 'vault'
+      and c.relname in ('secrets', 'decrypted_secrets')
+      and pg_catalog.has_table_privilege(rest_role.rolname, c.oid, grant_kind.privilege)
+  ) exposure;
+  if v_exposed is not null then
+    raise exception using
+      errcode = '42501',
+      message = 'A PostgREST role can reach the Supabase vault: ' || v_exposed,
+      hint = 'Revoke those privileges before installing Supabash. The capability secret must not be readable by anon, authenticated, or service_role.';
+  end if;
+end
+$vault_privileges$;
 
 notify pgrst, 'reload schema';
 

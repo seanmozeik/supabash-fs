@@ -77,14 +77,22 @@ as $function$
   );
 $function$;
 
+/*
+ * Deliberate test-only privilege bridge. `supabash_register_capability_verifier`
+ * is revoked from every PostgREST role on purpose, so the integration suite
+ * cannot call it. These two wrappers are `security definer` and are granted to
+ * `service_role` so the suite can register and revoke a key. They exist only in
+ * the test-support asset and are dropped by remove-test-support.sql. Never ship
+ * anything like them: a wrapper granted to `service_role` hands the minting
+ * secret to the role the capability system is designed to constrain.
+ */
 create or replace function public.supabash_test_register_verifier(
   p_key_id text,
-  p_secret text,
   p_issuer text,
   p_audience text,
   p_origin text
 )
-returns void
+returns text
 language sql
 security definer
 set search_path = pg_catalog, public
@@ -93,8 +101,7 @@ as $function$
     p_key_id => p_key_id,
     p_issuer => p_issuer,
     p_audience => p_audience,
-    p_origin => p_origin,
-    p_secret => p_secret
+    p_origin => p_origin
   );
 $function$;
 
@@ -105,6 +112,61 @@ security definer
 set search_path = pg_catalog, public
 as $function$
   select public.supabash_revoke_capability_verifier(p_key_id);
+$function$;
+
+/*
+ * Reports every privilege that a PostgREST role holds on the capability
+ * registration path and on the vault objects behind it. The suite asserts that
+ * both lists are empty.
+ */
+create or replace function public.supabash_test_privilege_report()
+returns jsonb
+language sql
+security definer
+set search_path = pg_catalog
+as $function$
+  select jsonb_build_object(
+    'functionPrivileges', coalesce((
+      select jsonb_agg(distinct rest_role.rolname || ' -> ' || n.nspname || '.' || p.proname)
+      from pg_catalog.pg_proc p
+      join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+      cross join (
+        select rolname from pg_catalog.pg_roles
+        where rolname in ('anon', 'authenticated', 'service_role')
+      ) rest_role
+      where (
+          (n.nspname = 'public' and p.proname in (
+            'supabash_register_capability_verifier', 'supabash_revoke_capability_verifier'
+          ))
+          or (n.nspname = 'supabash' and p.proname = 'capability_signature_valid')
+          or (n.nspname = 'vault' and p.proname in ('create_secret', 'update_secret'))
+        )
+        and pg_catalog.has_function_privilege(rest_role.rolname, p.oid, 'execute')
+    ), '[]'::jsonb),
+    'tablePrivileges', coalesce((
+      select jsonb_agg(distinct
+        rest_role.rolname || ' -> ' || grant_kind.privilege || ' ' || n.nspname || '.' || c.relname
+      )
+      from pg_catalog.pg_class c
+      join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+      cross join (
+        select rolname from pg_catalog.pg_roles
+        where rolname in ('anon', 'authenticated', 'service_role')
+      ) rest_role
+      cross join (values ('select'), ('insert'), ('update'), ('delete')) grant_kind(privilege)
+      where n.nspname = 'vault'
+        and c.relname in ('secrets', 'decrypted_secrets')
+        and pg_catalog.has_table_privilege(rest_role.rolname, c.oid, grant_kind.privilege)
+    ), '[]'::jsonb),
+    'schemaUsage', coalesce((
+      select jsonb_agg(distinct rest_role.rolname || ' -> vault')
+      from (
+        select rolname from pg_catalog.pg_roles
+        where rolname in ('anon', 'authenticated', 'service_role')
+      ) rest_role
+      where pg_catalog.has_schema_privilege(rest_role.rolname, 'vault', 'usage')
+    ), '[]'::jsonb)
+  );
 $function$;
 
 create or replace function public.supabash_test_set_revision_time(
@@ -125,14 +187,16 @@ $function$;
 revoke all on function public.supabash_test_fail_next_commit(uuid) from public, anon, authenticated;
 revoke all on function public.supabash_test_clear_commit_failure(uuid) from public, anon, authenticated;
 revoke all on function public.supabash_test_manifest_stats(uuid) from public, anon, authenticated;
-revoke all on function public.supabash_test_register_verifier(text, text, text, text, text) from public, anon, authenticated;
+revoke all on function public.supabash_test_register_verifier(text, text, text, text) from public, anon, authenticated;
 revoke all on function public.supabash_test_revoke_verifier(text) from public, anon, authenticated;
+revoke all on function public.supabash_test_privilege_report() from public, anon, authenticated;
 revoke all on function public.supabash_test_set_revision_time(uuid, uuid[], timestamptz) from public, anon, authenticated;
 grant execute on function public.supabash_test_fail_next_commit(uuid) to service_role;
 grant execute on function public.supabash_test_clear_commit_failure(uuid) to service_role;
 grant execute on function public.supabash_test_manifest_stats(uuid) to service_role;
-grant execute on function public.supabash_test_register_verifier(text, text, text, text, text) to service_role;
+grant execute on function public.supabash_test_register_verifier(text, text, text, text) to service_role;
 grant execute on function public.supabash_test_revoke_verifier(text) to service_role;
+grant execute on function public.supabash_test_privilege_report() to service_role;
 grant execute on function public.supabash_test_set_revision_time(uuid, uuid[], timestamptz) to service_role;
 
 notify pgrst, 'reload schema';

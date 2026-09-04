@@ -4,47 +4,79 @@ import {
   createDelegatedCapability,
   createPostgresDelegatedCapability,
   importCapabilitySecret,
-  verifyPostgresDelegatedCapability,
 } from '../../src/index.ts';
 import {
+  base64url,
+  capabilitySecretBytes,
   capabilitySecretKey,
   ed25519Pair,
   postgresSampleClaims,
-  postgresVerifierFor,
 } from '../support/delegated.ts';
 
+const text = new TextEncoder();
+
+/*
+ * The database is the only verifier of a Postgres capability, so these tests
+ * check the minted artifact against WebCrypto directly instead of against the
+ * package's own verifier.
+ */
 describe('postgres delegated capabilities', () => {
-  test('binds schema v3 claims to one backend and workspace', async () => {
+  test('mints a schema v3 HS256 JWS whose MAC an independent verifier accepts', async () => {
     const secretKey = await capabilitySecretKey();
     const claims = postgresSampleClaims();
     const capability = await createPostgresDelegatedCapability({ claims, keyId: 'k1', secretKey });
+    const [header, payload, signature] = capability.split('.');
 
-    expect(JSON.parse(atob(capability.split('.')[0] ?? ''))).toStrictEqual({
-      alg: 'HS256',
-      kid: 'k1',
-      typ: 'JWS',
-    });
+    expect(decodeJson(header)).toStrictEqual({ alg: 'HS256', kid: 'k1', typ: 'JWS' });
+    expect(decodeJson(payload)).toStrictEqual({ ...claims, sv: 3 });
     await expect(
-      verifyPostgresDelegatedCapability({ capability, verifier: postgresVerifierFor(secretKey) }),
-    ).resolves.toStrictEqual(claims);
+      crypto.subtle.verify(
+        { name: 'HMAC' },
+        secretKey,
+        decodeBytes(signature),
+        text.encode(`${header ?? ''}.${payload ?? ''}`),
+      ),
+    ).resolves.toBe(true);
   });
 
-  test('rejects a capability signed with another installation secret', async () => {
+  test('accepts a secret imported from its base64url vault form', async () => {
+    const bytes = capabilitySecretBytes();
+    const capability = await createPostgresDelegatedCapability({
+      claims: postgresSampleClaims(),
+      keyId: 'k1',
+      secretKey: await importCapabilitySecret(base64url(bytes)),
+    });
+    const [header, payload, signature] = capability.split('.');
+
+    await expect(
+      crypto.subtle.verify(
+        { name: 'HMAC' },
+        await capabilitySecretKey(bytes),
+        decodeBytes(signature),
+        text.encode(`${header ?? ''}.${payload ?? ''}`),
+      ),
+    ).resolves.toBe(true);
+  });
+
+  test('does not accept a MAC computed under another installation secret', async () => {
     const capability = await createPostgresDelegatedCapability({
       claims: postgresSampleClaims(),
       keyId: 'k1',
       secretKey: await capabilitySecretKey(),
     });
+    const [header, payload, signature] = capability.split('.');
 
     await expect(
-      verifyPostgresDelegatedCapability({
-        capability,
-        verifier: postgresVerifierFor(await capabilitySecretKey()),
-      }),
-    ).rejects.toMatchObject({ code: 'INVALID_CAPABILITY' });
+      crypto.subtle.verify(
+        { name: 'HMAC' },
+        await capabilitySecretKey(),
+        decodeBytes(signature),
+        text.encode(`${header ?? ''}.${payload ?? ''}`),
+      ),
+    ).resolves.toBe(false);
   });
 
-  test('rejects a tampered claim set under the same key id', async () => {
+  test('binds the operation set into the MAC', async () => {
     const secretKey = await capabilitySecretKey();
     const capability = await createPostgresDelegatedCapability({
       claims: postgresSampleClaims({ ops: ['read'] }),
@@ -52,19 +84,18 @@ describe('postgres delegated capabilities', () => {
       secretKey,
     });
     const [header, , signature] = capability.split('.');
-    const forgedPayload = btoa(
-      JSON.stringify(postgresSampleClaims({ ops: ['read', 'write', 'commit'] })),
-    )
-      .replaceAll('+', '-')
-      .replaceAll('/', '_')
-      .replaceAll('=', '');
+    const widened = base64url(
+      text.encode(JSON.stringify(postgresSampleClaims({ ops: ['read', 'write', 'commit'] }))),
+    );
 
     await expect(
-      verifyPostgresDelegatedCapability({
-        capability: `${header ?? ''}.${forgedPayload}.${signature ?? ''}`,
-        verifier: postgresVerifierFor(secretKey),
-      }),
-    ).rejects.toMatchObject({ code: 'INVALID_CAPABILITY' });
+      crypto.subtle.verify(
+        { name: 'HMAC' },
+        secretKey,
+        decodeBytes(signature),
+        text.encode(`${header ?? ''}.${widened}`),
+      ),
+    ).resolves.toBe(false);
   });
 
   test('rejects a malformed workspace binding before signing', async () => {
@@ -88,10 +119,6 @@ describe('postgres delegated capabilities', () => {
         privateKey: keys.privateKey,
       }),
     ).toThrow(expect.objectContaining({ code: 'INVALID_CAPABILITY' }));
-  });
-
-  test('refuses to mint a postgres capability with a non-HMAC key', async () => {
-    const keys = await ed25519Pair();
     expect(() =>
       createPostgresDelegatedCapability({
         claims: postgresSampleClaims(),
@@ -101,12 +128,28 @@ describe('postgres delegated capabilities', () => {
     ).toThrow(expect.objectContaining({ code: 'INVALID_CAPABILITY' }));
   });
 
-  test('rejects a capability secret that is too short', async () => {
-    await expect(importCapabilitySecret('c2hvcnQ')).rejects.toMatchObject({
+  test('rejects a capability secret that is short or not base64url', async () => {
+    await expect(importCapabilitySecret(base64url(new Uint8Array(31)))).rejects.toMatchObject({
       code: 'INVALID_CAPABILITY',
     });
     await expect(importCapabilitySecret('not base64url!')).rejects.toMatchObject({
       code: 'INVALID_CAPABILITY',
     });
+    await expect(importCapabilitySecret('A'.repeat(45))).rejects.toMatchObject({
+      code: 'INVALID_CAPABILITY',
+    });
   });
 });
+
+const decodeBytes = (value = ''): Uint8Array<ArrayBuffer> => {
+  const padded = value.replaceAll('-', '+').replaceAll('_', '/');
+  const binary = atob(padded.padEnd(Math.ceil(padded.length / 4) * 4, '='));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.codePointAt(index) ?? 0;
+  }
+  return bytes;
+};
+
+const decodeJson = (value = ''): unknown =>
+  JSON.parse(new TextDecoder().decode(decodeBytes(value)));

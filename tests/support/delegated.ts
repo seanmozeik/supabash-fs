@@ -1,12 +1,9 @@
 import {
   CAPABILITY_SCHEMA_VERSION,
-  generateCapabilitySecret,
-  importCapabilitySecret,
   POSTGRES_CAPABILITY_SCHEMA_VERSION,
   type DelegatedCapabilityClaims,
   type DelegatedVerifier,
   type PostgresDelegatedCapabilityClaims,
-  type PostgresDelegatedVerifier,
 } from '../../src/index.ts';
 
 export const sampleClaims = (
@@ -64,16 +61,19 @@ export const postgresSampleClaims = (
   ...overrides,
 });
 
-export const postgresVerifierFor = (
-  secretKey: CryptoKey,
-  overrides: Partial<PostgresDelegatedVerifier> = {},
-): PostgresDelegatedVerifier => ({
-  audience: 'supabash-jobs',
-  issuer: 'https://example.invalid/issuer',
-  origin: 'https://project.supabase.co',
-  secretKeys: { k1: secretKey },
-  ...overrides,
-});
+export const capabilitySecretBytes = (): Uint8Array<ArrayBuffer> =>
+  crypto.getRandomValues(new Uint8Array(32));
 
-export const capabilitySecretKey = (): Promise<CryptoKey> =>
-  importCapabilitySecret(generateCapabilitySecret());
+export const capabilitySecretKey = (bytes = capabilitySecretBytes()): Promise<CryptoKey> =>
+  crypto.subtle.importKey('raw', bytes, { name: 'HMAC', hash: { name: 'SHA-256' } }, false, [
+    'sign',
+    'verify',
+  ]);
+
+export const base64url = (bytes: Uint8Array): string => {
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCodePoint(byte);
+  }
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+};

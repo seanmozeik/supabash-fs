@@ -659,7 +659,8 @@ the capability is a compact `HS256` JWS signed with a secret that the minting
 host and the database share. The job that presents the capability never holds
 that secret and needs no verification key at all.
 
-The database owner registers the key once and receives the secret exactly once:
+The database owner registers the key once. The database mints the secret and
+returns it exactly once, so no caller writes a secret into SQL statement text:
 
 ```sql
 select public.supabash_register_capability_verifier(
@@ -671,8 +672,10 @@ select public.supabash_register_capability_verifier(
 ```
 
 The secret is stored in `supabase_vault` and read only by the SQL exchange
-function. Put the returned value in the minting host's environment, for
-example `supabase secrets set SUPABASH_CAPABILITY_SECRET=<value>`.
+path. Put the returned value in the minting host's environment, for example
+`supabase secrets set SUPABASH_CAPABILITY_SECRET=<value>`. Rotate with the same
+call, or register a second `p_key_id` for an overlap window and then
+`select public.supabash_revoke_capability_verifier('k1')`.
 
 The signed claims replace `bucket` and `prefix` with `backend: 'postgres'` and
 one canonical `workspace` UUID:
@@ -751,9 +754,15 @@ principals that can create authority does not grow. What is given up is
 distinguishing several mutually distrusting minters by key. Since the database
 is the only verifier, no other principal can observe that difference. Residual
 risks: a leaked secret lets an attacker mint capabilities for any workspace
-until the key is rotated, and a leaked capability is still bounded by its
-`workspace`, `ops`, `exp`, and single-use `nonce`. Rotate with a second
-`p_key_id`, then revoke the first.
+until the key is rotated; a leaked capability is still bounded by its
+`workspace`, `ops`, `exp`, and single-use `nonce`; and the minting host must
+keep the secret out of the delegate's environment, because a delegate that
+holds it stops being bounded by its capability.
+
+The control that keeps the secret away from a REST caller is that the `vault`
+schema stays out of the PostgREST exposed schemas. As a second line, the
+install refuses to run when `anon`, `authenticated`, or `service_role` holds
+any privilege on the vault objects behind the secret.
 
 Threat model, in short:
 

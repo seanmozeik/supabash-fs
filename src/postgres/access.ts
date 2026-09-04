@@ -1,8 +1,11 @@
-import type { DelegatedOperation, PostgresDelegatedCapabilityClaims } from '../api/capability.js';
+import {
+  isDelegatedOperation,
+  WORKSPACE_ID_PATTERN,
+  type DelegatedOperation,
+  type PostgresDelegatedCapabilityClaims,
+} from '../api/capability.js';
 import { SupabashError } from '../api/errors.js';
 import { asUnknownRecord } from '../api/json.js';
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 export interface DelegatedDatabaseGrant {
   readonly actorSubject: string;
@@ -55,7 +58,7 @@ export const decodeDelegatedGrant = (
 };
 
 export const assertPostgresWorkspaceIdentifier = (workspace: string): void => {
-  if (!UUID.test(workspace)) {
+  if (!WORKSPACE_ID_PATTERN.test(workspace)) {
     throw new SupabashError('INVALID_PATH', 'Workspace must be one canonical identifier.');
   }
 };
@@ -66,7 +69,7 @@ const operationsField = (value: unknown): readonly DelegatedOperation[] => {
   }
   const operations: DelegatedOperation[] = [];
   for (const entry of value) {
-    if (typeof entry !== 'string' || !isOperation(entry)) {
+    if (typeof entry !== 'string' || !isDelegatedOperation(entry)) {
       throw invalidCapability('Capability exchange returned an unsupported operation.');
     }
     operations.push(entry);
@@ -75,23 +78,6 @@ const operationsField = (value: unknown): readonly DelegatedOperation[] => {
     throw invalidCapability('Capability exchange returned duplicate operations.');
   }
   return operations;
-};
-
-const isOperation = (value: string): value is DelegatedOperation => {
-  switch (value) {
-    case 'checkpoint':
-    case 'commit':
-    case 'history':
-    case 'purge':
-    case 'read':
-    case 'restore':
-    case 'write': {
-      return true;
-    }
-    default: {
-      return false;
-    }
-  }
 };
 
 const sameOperations = (
