@@ -178,6 +178,14 @@ const provePrivilegeBoundary = async (context: LiveContext): Promise<void> => {
     );
   }
 
+  const secretTable = await context.serviceRpcResponse('supabash_test_secret_present', {
+    p_key_id: KEY_ID,
+  });
+  assert(
+    secretTable.ok && secretTable.body === true,
+    'The registered key has no stored signing secret.',
+  );
+
   const registration = await context.serviceRpcResponse('supabash_register_capability_verifier', {
     p_audience: 'attacker',
     p_issuer: 'attacker',
@@ -197,6 +205,8 @@ const proveRevocation = async (
   claims: PostgresDelegatedCapabilityClaims,
 ): Promise<void> => {
   await context.serviceRpc('supabash_test_revoke_verifier', { p_key_id: KEY_ID });
+  const remaining = await context.serviceRpc('supabash_test_secret_present', { p_key_id: KEY_ID });
+  assert(remaining === false, 'Revoking a key left its signing secret behind.');
   await expectRefusal(
     context,
     await mint(secretKey, { ...claims, nonce: `${context.runId}-delegated-revoked` }),

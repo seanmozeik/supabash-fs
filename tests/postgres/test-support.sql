@@ -116,8 +116,8 @@ $function$;
 
 /*
  * Reports every privilege that a PostgREST role holds on the capability
- * registration path and on the vault objects behind it. The suite asserts that
- * both lists are empty.
+ * registration path and on the table that holds the signing secret. The suite
+ * asserts that all three lists are empty.
  */
 create or replace function public.supabash_test_privilege_report()
 returns jsonb
@@ -139,7 +139,6 @@ as $function$
             'supabash_register_capability_verifier', 'supabash_revoke_capability_verifier'
           ))
           or (n.nspname = 'supabash' and p.proname = 'capability_signature_valid')
-          or (n.nspname = 'vault' and p.proname in ('create_secret', 'update_secret'))
         )
         and pg_catalog.has_function_privilege(rest_role.rolname, p.oid, 'execute')
     ), '[]'::jsonb),
@@ -153,20 +152,31 @@ as $function$
         select rolname from pg_catalog.pg_roles
         where rolname in ('anon', 'authenticated', 'service_role')
       ) rest_role
-      cross join (values ('select'), ('insert'), ('update'), ('delete')) grant_kind(privilege)
-      where n.nspname = 'vault'
-        and c.relname in ('secrets', 'decrypted_secrets')
+      cross join (values ('select'), ('insert'), ('update'), ('delete'), ('references'))
+        grant_kind(privilege)
+      where n.nspname = 'supabash'
+        and c.relname = 'capability_secrets'
         and pg_catalog.has_table_privilege(rest_role.rolname, c.oid, grant_kind.privilege)
     ), '[]'::jsonb),
     'schemaUsage', coalesce((
-      select jsonb_agg(distinct rest_role.rolname || ' -> vault')
+      select jsonb_agg(distinct rest_role.rolname || ' -> supabash')
       from (
         select rolname from pg_catalog.pg_roles
         where rolname in ('anon', 'authenticated', 'service_role')
       ) rest_role
-      where pg_catalog.has_schema_privilege(rest_role.rolname, 'vault', 'usage')
+      where pg_catalog.has_schema_privilege(rest_role.rolname, 'supabash', 'usage')
     ), '[]'::jsonb)
   );
+$function$;
+
+/* Proves that revoking a key cascades its secret away. */
+create or replace function public.supabash_test_secret_present(p_key_id text)
+returns boolean
+language sql
+security definer
+set search_path = pg_catalog, supabash
+as $function$
+  select exists (select 1 from supabash.capability_secrets where key_id = p_key_id);
 $function$;
 
 create or replace function public.supabash_test_set_revision_time(
@@ -190,6 +200,7 @@ revoke all on function public.supabash_test_manifest_stats(uuid) from public, an
 revoke all on function public.supabash_test_register_verifier(text, text, text, text) from public, anon, authenticated;
 revoke all on function public.supabash_test_revoke_verifier(text) from public, anon, authenticated;
 revoke all on function public.supabash_test_privilege_report() from public, anon, authenticated;
+revoke all on function public.supabash_test_secret_present(text) from public, anon, authenticated;
 revoke all on function public.supabash_test_set_revision_time(uuid, uuid[], timestamptz) from public, anon, authenticated;
 grant execute on function public.supabash_test_fail_next_commit(uuid) to service_role;
 grant execute on function public.supabash_test_clear_commit_failure(uuid) to service_role;
@@ -197,6 +208,7 @@ grant execute on function public.supabash_test_manifest_stats(uuid) to service_r
 grant execute on function public.supabash_test_register_verifier(text, text, text, text) to service_role;
 grant execute on function public.supabash_test_revoke_verifier(text) to service_role;
 grant execute on function public.supabash_test_privilege_report() to service_role;
+grant execute on function public.supabash_test_secret_present(text) to service_role;
 grant execute on function public.supabash_test_set_revision_time(uuid, uuid[], timestamptz) to service_role;
 
 notify pgrst, 'reload schema';

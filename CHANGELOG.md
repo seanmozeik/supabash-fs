@@ -21,18 +21,34 @@ remove the old install first.
   database. Both could already create authority, so the set of principals that
   can mint does not grow, and the delegate that presents a capability still
   holds no key at all.
-- Hold the Postgres capability secret in `supabase_vault` and keep it behind
-  `supabash.capability_signature_valid`. The exchange RPC is owned by the
-  least-privileged `supabash_api` role, which has no vault access, so it never
-  sees the secret. The new function keeps its definer rights with the
-  installing database owner, accepts only a vault name carrying the
-  `supabash_capability_` prefix that the `secret_name` column constraint
-  enforces, so it cannot be steered at an unrelated vault secret, and returns
-  only a boolean. Its execute privilege is revoked from `public`, `anon`,
-  `authenticated`, and `service_role`, and `vault.decrypted_secrets` is not in
-  a PostgREST-exposed schema. The MAC comparison runs under a fresh random
-  blind so it leaks no prefix. This boundary is tighter than the one it
-  replaces, which handed the verification key to `supabash_api`.
+- Hold the Postgres capability secret in `supabash.capability_secrets` and keep
+  it behind `supabash.capability_signature_valid`. That table grants nothing to
+  any role. Row level security is enabled on it without `force`, so the
+  installing owner keeps access and every other role is denied both by grants
+  and by the absence of any policy. The exchange RPC is owned by the
+  least-privileged `supabash_api` role, which holds no privilege on the table,
+  so it never sees the secret. The verification function keeps its definer
+  rights with the installing owner, reads the one secret for the key, compares
+  the MAC under a fresh random blind so it leaks no prefix, and returns only a
+  boolean. Its execute privilege is revoked from `public`, `anon`,
+  `authenticated`, and `service_role`. Forging a capability therefore needs the
+  minting host's secret, database-owner access, or a copy of the database, and
+  no PostgREST role can read the secret. The boundary rests only on grants this
+  package owns.
+- Do not use `supabase_vault`. A live install on Supabase PostgreSQL 17.6 with
+  `supabase_vault` 0.3.1 showed that `service_role` holds `select` and `delete`
+  on `vault.secrets` and `vault.decrypted_secrets` and `execute` on
+  `vault.create_secret` and `vault.update_secret`. The vault would give this
+  secret no protection from the one role the capability system exists to
+  constrain, and the only remaining barrier would be the PostgREST
+  exposed-schema setting, which this package does not control. Revoking the
+  platform's own grants would be fragile, because a platform upgrade can
+  restore them.
+- Unlike the Ed25519 scheme it replaces, the signing secret now lives inside
+  the database, so a database dump contains it and anyone holding a dump can
+  mint capabilities for any workspace. Rotation is the answer to a suspected
+  dump leak: register the same `p_key_id` again and reload the minting host's
+  environment.
 - Add `public.supabash_register_capability_verifier` and
   `public.supabash_revoke_capability_verifier`. The database mints the secret,
   stores it in the vault, and returns it once, so no caller writes a secret
@@ -51,22 +67,23 @@ remove the old install first.
   The exchange accepts a capability until `exp` plus the skew, so a row that
   expired at `exp` was purged by a later call and let the same capability mint
   a second grant inside that window.
-- Refuse to install when `supabase_vault` is absent, with a message that names
-  the extension. Refuse to install when `anon`, `authenticated`, or
-  `service_role` holds any privilege on `vault.secrets`,
-  `vault.decrypted_secrets`, `vault.create_secret`, or `vault.update_secret`.
-  The real control is that the `vault` schema stays out of the PostgREST
-  exposed schemas; the install check is a second line.
+- Need only `pgcrypto`. The asset installs on a stock Supabase PostgreSQL 17
+  project and on plain PostgreSQL 17.
+- Refuse to install when `anon`, `authenticated`, or `service_role` holds any
+  privilege on `supabash.capability_secrets`, or `usage` on the `supabash`
+  schema. The install now asserts the exact boundary it depends on.
 - Add live proofs for the security claims: no PostgREST role holds any
   privilege on the registration functions, on
-  `supabash.capability_signature_valid`, or on the vault objects; the service
-  role cannot call either registration RPC; the exchange refuses an
-  unregistered secret, an unsupported `sv`, an `EdDSA` header, an expired
-  capability, and a replayed nonce; and revocation removes both the row and its
-  vault secret.
-- Tolerate a 0.4.x layout in `0001_remove.sql`. Its vault cleanup reads
-  `secret_name`, which a 0.4.x install does not have, so the handler now also
-  catches `undefined_column` and removal no longer aborts half way.
+  `supabash.capability_signature_valid`, on `supabash.capability_secrets`, or
+  `usage` on the `supabash` schema; direct table reads of the three capability
+  tables are refused; the service role cannot call either registration RPC; the
+  exchange refuses an unregistered secret, an unsupported `sv`, an `EdDSA`
+  header, an expired capability, and a replayed nonce; and revoking a key
+  cascades its secret away and makes further capabilities for that key fail.
+- Delete a key's secret through a foreign key cascade from
+  `supabash.capability_verifiers`, so `0001_remove.sql` cleans up nothing
+  outside the `supabash` schema and removal of a 0.4.x install needs no special
+  handling.
 - Raise the Postgres capability schema version to 3 and replace
   `supabash.capability_verifiers.public_key` with `secret_name`. A schema
   version 2 capability and an Ed25519 verifier row are no longer accepted.

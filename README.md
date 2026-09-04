@@ -671,8 +671,9 @@ select public.supabash_register_capability_verifier(
 );
 ```
 
-The secret is stored in `supabase_vault` and read only by the SQL exchange
-path. Put the returned value in the minting host's environment, for example
+The secret is stored in `supabash.capability_secrets`, which grants nothing to
+any role, and is read only by the SQL verification path. Put the returned value
+in the minting host's environment, for example
 `supabase secrets set SUPABASH_CAPABILITY_SECRET=<value>`. Rotate with the same
 call, or register a second `p_key_id` for an overlap window and then
 `select public.supabash_revoke_capability_verifier('k1')`.
@@ -730,13 +731,13 @@ from the presented claims and not from caller-supplied identity fields. The
 package reads the presented claims only to refuse an obviously wrong request
 early and to detect a response that does not match the capability it sent.
 
-The exchange RPC is owned by a least-privileged role with no vault access, so
-it never sees the secret. It calls one narrow function that keeps its definer
-rights with the database owner, recomputes the MAC with `extensions.hmac`,
-compares it under a fresh random blind, and returns only a boolean. The RPC
-then consumes the nonce and returns an opaque short-lived grant bound to the
-signed workspace and operations. Service-role RPC calls cannot select a
-workspace without this grant.
+The exchange RPC is owned by a least-privileged role that holds no privilege on
+the secret table, so it never sees the secret. It calls one narrow function
+that keeps its definer rights with the database owner, recomputes the MAC with
+`extensions.hmac`, compares it under a fresh random blind, and returns only a
+boolean. The RPC then consumes the nonce and returns an opaque short-lived
+grant bound to the signed workspace and operations. Service-role RPC calls
+cannot select a workspace without this grant.
 
 Why HMAC and not Ed25519: verifying an Ed25519 signature in SQL needed
 `pgsodium`, which Supabase has deprecated and no longer ships on PostgreSQL 17,
@@ -757,12 +758,28 @@ risks: a leaked secret lets an attacker mint capabilities for any workspace
 until the key is rotated; a leaked capability is still bounded by its
 `workspace`, `ops`, `exp`, and single-use `nonce`; and the minting host must
 keep the secret out of the delegate's environment, because a delegate that
-holds it stops being bounded by its capability.
+holds it stops being bounded by its capability. Unlike the Ed25519 scheme, the
+signing secret is now inside the database, so a database dump contains it and
+anyone holding a dump can mint. Rotation is the answer to a suspected dump
+leak.
 
-The control that keeps the secret away from a REST caller is that the `vault`
-schema stays out of the PostgREST exposed schemas. As a second line, the
-install refuses to run when `anon`, `authenticated`, or `service_role` holds
-any privilege on the vault objects behind the secret.
+The boundary rests only on grants this package owns. `supabash.capability_secrets`
+grants nothing to `anon`, `authenticated`, or `service_role`; row level security
+is enabled on it without `force`, so the installing owner keeps access and every
+other role is denied twice; and the only path to the secret is a definer-rights
+function that returns a boolean. Forging a capability therefore needs the
+minting host's secret, database-owner access, or a copy of the database. The
+install refuses to run if any PostgREST role holds a privilege on that table or
+`usage` on the `supabash` schema.
+
+`supabase_vault` is not used, and this is a deliberate reversal. On a stock
+Supabase project `service_role` holds `select` and `delete` on `vault.secrets`
+and `vault.decrypted_secrets` and `execute` on `vault.create_secret` and
+`vault.update_secret`; a live install proved it. The vault would give this
+secret no protection from the one role the design exists to constrain, and the
+only remaining barrier would be the PostgREST exposed-schema setting, which
+this package does not control. Revoking the platform's grants would be fragile,
+because a platform upgrade can restore them.
 
 Threat model, in short:
 

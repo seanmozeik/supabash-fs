@@ -17,32 +17,9 @@ drop function if exists public.supabash_revoke_capability_verifier(text);
 drop function if exists public.supabash_register_capability_verifier(text, text, text, text, integer, integer);
 
 /*
- * Deletes the vault secrets that this install created. The handler also
- * catches `undefined_column`, which is what a 0.4.x install raises: its
- * verifier table has `public_key` and no `secret_name`. Without that, removal
- * aborted here and left the database half removed.
+ * The capability secrets live in `supabash.capability_secrets`, so the schema
+ * drop takes them with it. Nothing outside this schema has to be cleaned up.
  */
-do $secrets$
-begin
-  if exists (
-    select 1
-    from pg_catalog.pg_class c
-    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'supabash' and c.relname = 'capability_verifiers'
-  ) then
-    delete from vault.secrets
-    where name in (select secret_name from supabash.capability_verifiers);
-  end if;
-exception
-  when undefined_table
-    or undefined_column
-    or undefined_function
-    or insufficient_privilege
-  then
-    raise notice 'Supabash capability secrets were left in the vault.';
-end
-$secrets$;
-
 drop schema if exists supabash cascade;
 
 do $role$
