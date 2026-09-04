@@ -21,8 +21,10 @@ One opened `Workspace` is the unit of work:
 2. `Supabash.openPostgres` verifies the same bearer token and opens one canonical
    workspace identifier. Database RLS checks that the verified subject owns it.
 3. `Supabash.openDelegated` and `Supabash.openPostgresDelegated` are separate
-   trusted-host paths. They verify a short-lived Ed25519 capability and mount
-   only its signed Storage prefix or Postgres workspace.
+   trusted-host paths. They mount only the Storage prefix or Postgres workspace
+   that a short-lived signed capability admits. Storage capabilities are
+   verified in process against an Ed25519 public key. Postgres capabilities are
+   verified inside the database.
 4. `workspace.fs` is a Just Bash `IFileSystem`. Bash, Apply Patch, and optional
    image inspection all use this same staged tree.
 5. `commit` publishes staged edits and returns an immutable transaction receipt.
@@ -579,10 +581,14 @@ An indexer should:
 ## Delegated access
 
 Trusted background jobs can open one scoped workspace when no live user JWT
-exists. This is not `openAsUser`. The host signs a compact Ed25519 JWS and
-passes it to `Supabash.openDelegated`. Signing uses a `CryptoKey` private key.
-Verification accepts one or more keyed public keys. Shared text secrets are
-not accepted.
+exists. This is not `openAsUser`. The host signs a short-lived compact JWS and
+passes it to `Supabash.openDelegated` or `Supabash.openPostgresDelegated`.
+
+Storage capabilities are signed with Ed25519. The delegate verifies them
+itself, so it must not be able to mint them, and it holds only keyed public
+keys. Postgres capabilities are signed with HMAC-SHA256 and verified inside the
+database, so the delegate holds nothing at all. Both signing keys are
+`CryptoKey` values.
 
 ```ts
 import {
@@ -645,18 +651,49 @@ signed prefix. That is a host trust boundary: anyone who can call
 `openDelegated` with a valid capability and the service-role key can read and
 write that prefix.
 
-Postgres delegation uses schema version 2. The signed claims replace `bucket`
-and `prefix` with `backend: 'postgres'` and one canonical `workspace` UUID:
+### Postgres delegation
+
+Postgres delegation uses schema version 3 and a different signature scheme,
+because a different party verifies it. The database is the only verifier, so
+the capability is a compact `HS256` JWS signed with a secret that the minting
+host and the database share. The job that presents the capability never holds
+that secret and needs no verification key at all.
+
+The database owner registers the key once and receives the secret exactly once:
+
+```sql
+select public.supabash_register_capability_verifier(
+  p_key_id => 'k1',
+  p_issuer => 'https://issuer.example',
+  p_audience => 'supabash-jobs',
+  p_origin => 'https://project.example'
+);
+```
+
+The secret is stored in `supabase_vault` and read only by the SQL exchange
+function. Put the returned value in the minting host's environment, for
+example `supabase secrets set SUPABASH_CAPABILITY_SECRET=<value>`.
+
+The signed claims replace `bucket` and `prefix` with `backend: 'postgres'` and
+one canonical `workspace` UUID:
 
 ```ts
-const capability = await createDelegatedCapability({
+import {
+  createPostgresDelegatedCapability,
+  importCapabilitySecret,
+  POSTGRES_CAPABILITY_SCHEMA_VERSION,
+  Supabash,
+} from '@seanmozeik/supabash-fs';
+
+const secretKey = await importCapabilitySecret(capabilitySecret);
+const capability = await createPostgresDelegatedCapability({
   claims: {
     aud: 'supabash-jobs',
     backend: 'postgres',
     corr: 'job-2',
     exp: Math.floor(Date.now() / 1000) + 300,
     iat: Math.floor(Date.now() / 1000),
-    iss: 'https://example.invalid/issuer',
+    iss: 'https://issuer.example',
     nonce: 'job-2',
     ops: ['read', 'write', 'commit', 'history'],
     origin: supabaseUrl,
@@ -665,7 +702,7 @@ const capability = await createDelegatedCapability({
     workspace: workspaceId,
   },
   keyId: 'k1',
-  privateKey,
+  secretKey,
 });
 
 const workspace = await Supabash.openPostgresDelegated({
@@ -673,7 +710,6 @@ const workspace = await Supabash.openPostgresDelegated({
   expectedOperations: ['read', 'write', 'commit', 'history'],
   serviceRoleKey,
   supabaseUrl,
-  verifier,
 });
 ```
 
@@ -682,24 +718,51 @@ its pinned text snapshot into the staged filesystem. Add only the other
 operations that the job needs. A `restore` capability can plan a forward
 restore without also granting `history`.
 
-When `expectedOperations` is present, the signed capability must contain that
-exact set. Extra, missing, or duplicate operations fail before capability
-exchange or workspace load. The returned workspace exposes frozen verified
-`delegation` details: actor, correlation ID, operations, subject, and workspace.
-These details come from the verified claims, not from caller-supplied identity
-fields.
+When `expectedOperations` is present, the granted operation set must be exactly
+that set. Extra, missing, or duplicate operations fail before capability
+exchange or workspace load. The returned workspace exposes frozen `delegation`
+details: actor, correlation ID, operations, subject, and workspace. These come
+from the grant that the database minted after it verified the signature, not
+from the presented claims and not from caller-supplied identity fields. The
+package reads the presented claims only to refuse an obviously wrong request
+early and to detect a response that does not match the capability it sent.
 
-Register each allowed Ed25519 public key in
-`supabash.capability_verifiers` as the database owner. The SQL verifies the
-JWS, consumes its nonce, and returns an opaque short-lived grant bound to the
+The exchange RPC is owned by a least-privileged role with no vault access, so
+it never sees the secret. It calls one narrow function that keeps its definer
+rights with the database owner, recomputes the MAC with `extensions.hmac`,
+compares it under a fresh random blind, and returns only a boolean. The RPC
+then consumes the nonce and returns an opaque short-lived grant bound to the
 signed workspace and operations. Service-role RPC calls cannot select a
-workspace without this grant. See the package-owned Postgres SQL README for
-the key registration statement.
+workspace without this grant.
+
+Why HMAC and not Ed25519: verifying an Ed25519 signature in SQL needed
+`pgsodium`, which Supabase has deprecated and no longer ships on PostgreSQL 17,
+and which a migration cannot install. `pgcrypto` offers no public-key signature
+verification. Moving verification into the process that opens the session was
+the other option, and it was rejected: that process holds the service role, so
+it would both verify the capability and assert the result, and a caller holding
+only the service role could then mint its own authority. Keeping verification
+in SQL keeps that caller unable to forge anything.
+
+What the symmetric secret changes: any party holding the secret can mint a
+capability, so the minting host and the database are now equally trusted for
+minting. The database owner could already insert grants directly, so the set of
+principals that can create authority does not grow. What is given up is
+distinguishing several mutually distrusting minters by key. Since the database
+is the only verifier, no other principal can observe that difference. Residual
+risks: a leaked secret lets an attacker mint capabilities for any workspace
+until the key is rotated, and a leaked capability is still bounded by its
+`workspace`, `ops`, `exp`, and single-use `nonce`. Rotate with a second
+`p_key_id`, then revoke the first.
 
 Threat model, in short:
 
-- Changing the subject or prefix in a copied token fails signature checks.
+- Changing the subject, prefix, workspace, or operation set in a copied token
+  fails signature checks.
 - Copying a valid capability to another bucket or origin fails verification.
+- A caller holding only the service-role key and the capability format cannot
+  mint a capability. The Ed25519 private key and the Postgres capability secret
+  are both outside its reach.
 - A parent prefix is not implied by a child prefix.
 - Expiry and optional nonce stores block stale or replayed jobs.
 - A compromised model prompt cannot select a bucket, user, or credential.

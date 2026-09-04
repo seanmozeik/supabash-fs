@@ -90,6 +90,13 @@ export const postgresError = (error: PostgrestFailure): SupabashError => {
       { cause: error },
     );
   }
+  if (stable.includes('SUPABASH_CAPABILITY_SECRET_UNAVAILABLE')) {
+    return new SupabashError(
+      'AUTHORIZATION',
+      'Postgres cannot read the capability verification secret.',
+      { cause: error },
+    );
+  }
   if (stable.includes('SUPABASH_AUTHENTICATION_REQUIRED')) {
     return new SupabashError('AUTHENTICATION', 'Postgres requires an authenticated subject.', {
       cause: error,

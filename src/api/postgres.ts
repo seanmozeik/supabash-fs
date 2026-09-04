@@ -1,5 +1,5 @@
 import type { WorkspaceLimits } from '../history/limits.js';
-import type { DelegatedOperation, DelegatedVerifier } from './capability.js';
+import type { DelegatedOperation } from './capability.js';
 import type { Workspace, WorkspaceCapabilities } from './contracts.js';
 import type { DocumentMetadata, TextDocumentCodec } from './document-codec.js';
 import type { WorkspaceObservability } from './observability.js';
@@ -70,10 +70,14 @@ export interface CreatePostgresWorkspaceOptions {
   readonly supabaseUrl: string;
 }
 
+/**
+ * The database verifies the capability and returns the grant, so a delegate
+ * needs no verification key of its own.
+ */
 export interface OpenPostgresDelegatedOptions {
   readonly capability: string;
   readonly documentCodec?: TextDocumentCodec;
-  /** Require the signed capability to contain exactly this operation set. */
+  /** Require the granted capability to contain exactly this operation set. */
   readonly expectedOperations?: readonly DelegatedOperation[];
   readonly fetch?: typeof globalThis.fetch;
   readonly limits?: WorkspaceLimits;
@@ -81,5 +85,4 @@ export interface OpenPostgresDelegatedOptions {
   readonly observability?: WorkspaceObservability;
   readonly serviceRoleKey: string;
   readonly supabaseUrl: string;
-  readonly verifier: DelegatedVerifier;
 }

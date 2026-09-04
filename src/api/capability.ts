@@ -2,7 +2,7 @@ import type { WorkspaceLimits } from '../history/limits.js';
 import type { CommitCoordinator } from './commit.js';
 
 export const CAPABILITY_SCHEMA_VERSION = 1;
-export const POSTGRES_CAPABILITY_SCHEMA_VERSION = 2;
+export const POSTGRES_CAPABILITY_SCHEMA_VERSION = 3;
 export const DEFAULT_CLOCK_SKEW_SECONDS = 60;
 export const DEFAULT_MAX_CAPABILITY_LIFETIME_SECONDS = 900;
 
@@ -49,10 +49,22 @@ export type AnyDelegatedCapabilityClaims =
   | DelegatedCapabilityClaims
   | PostgresDelegatedCapabilityClaims;
 
+/** Storage capabilities are signed with Ed25519 and verified by the delegate itself. */
 export interface CreateDelegatedCapabilityInput {
-  readonly claims: AnyDelegatedCapabilityClaims;
+  readonly claims: DelegatedCapabilityClaims;
   readonly keyId: string;
   readonly privateKey: CryptoKey;
+}
+
+/**
+ * Postgres capabilities are signed with HMAC-SHA256. The database is the only
+ * verifier, so the secret is shared between the minting host and the database
+ * and is never handed to the delegate that presents the capability.
+ */
+export interface CreatePostgresDelegatedCapabilityInput {
+  readonly claims: PostgresDelegatedCapabilityClaims;
+  readonly keyId: string;
+  readonly secretKey: CryptoKey;
 }
 
 export interface CapabilityNonceStore {
@@ -69,9 +81,28 @@ export interface DelegatedVerifier {
   readonly publicKeys: Readonly<Record<string, CryptoKey>>;
 }
 
+/**
+ * Only a party that already holds the shared capability secret can verify a
+ * Postgres capability locally. A delegate must let the database verify it.
+ */
+export interface PostgresDelegatedVerifier {
+  readonly audience: string;
+  readonly clockSkewSeconds?: number;
+  readonly issuer: string;
+  readonly maxLifetimeSeconds?: number;
+  readonly nonceStore?: CapabilityNonceStore;
+  readonly origin: string;
+  readonly secretKeys: Readonly<Record<string, CryptoKey>>;
+}
+
 export interface VerifyDelegatedCapabilityInput {
   readonly capability: string;
   readonly verifier: DelegatedVerifier;
+}
+
+export interface VerifyPostgresDelegatedCapabilityInput {
+  readonly capability: string;
+  readonly verifier: PostgresDelegatedVerifier;
 }
 
 export interface OpenDelegatedOptions {

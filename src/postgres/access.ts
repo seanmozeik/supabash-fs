@@ -5,6 +5,7 @@ import { asUnknownRecord } from '../api/json.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 export interface DelegatedDatabaseGrant {
+  readonly actorSubject: string;
   readonly correlationId: string;
   readonly delegatedGrant: string;
   readonly expiresAt: Date;
@@ -22,6 +23,11 @@ export const decodeCreatedWorkspace = (value: unknown): string => {
   return workspace;
 };
 
+/**
+ * Decodes the grant that the database minted after it verified the capability.
+ * `claims` are the unverified claims the delegate presented. They are compared
+ * only so that a swapped or stale response cannot widen the grant.
+ */
 export const decodeDelegatedGrant = (
   value: unknown,
   claims: PostgresDelegatedCapabilityClaims,
@@ -30,20 +36,22 @@ export const decodeDelegatedGrant = (
   if (record === undefined) {
     throw invalidCapability('Capability exchange did not return an object.');
   }
+  const actorSubject = stringField(record, 'actorSubject');
   const delegatedGrant = stringField(record, 'delegatedGrant');
   const correlationId = stringField(record, 'correlationId');
   const workspace = stringField(record, 'workspace');
   const expiresAt = dateField(record, 'expiresAt');
   const operations = operationsField(record['operations']);
   if (
+    actorSubject !== claims.sub ||
     workspace !== claims.workspace ||
     correlationId !== claims.corr ||
     Math.floor(expiresAt.getTime() / 1000) !== claims.exp ||
     !sameOperations(operations, claims.ops)
   ) {
-    throw invalidCapability('Capability exchange result does not match the signed capability.');
+    throw invalidCapability('Capability exchange result does not match the presented capability.');
   }
-  return { correlationId, delegatedGrant, expiresAt, operations, workspace };
+  return { actorSubject, correlationId, delegatedGrant, expiresAt, operations, workspace };
 };
 
 export const assertPostgresWorkspaceIdentifier = (workspace: string): void => {

@@ -79,7 +79,7 @@ $function$;
 
 create or replace function public.supabash_test_register_verifier(
   p_key_id text,
-  p_public_key_hex text,
+  p_secret text,
   p_issuer text,
   p_audience text,
   p_origin text
@@ -87,27 +87,24 @@ create or replace function public.supabash_test_register_verifier(
 returns void
 language sql
 security definer
-set search_path = pg_catalog, supabash
+set search_path = pg_catalog, public
 as $function$
-  insert into supabash.capability_verifiers (
-    key_id,
-    public_key,
-    issuer,
-    audience,
-    origin
-  ) values (
-    p_key_id,
-    decode(p_public_key_hex, 'hex'),
-    p_issuer,
-    p_audience,
-    p_origin
-  )
-  on conflict (key_id) do update set
-    public_key = excluded.public_key,
-    issuer = excluded.issuer,
-    audience = excluded.audience,
-    origin = excluded.origin,
-    active = true;
+  select public.supabash_register_capability_verifier(
+    p_key_id => p_key_id,
+    p_issuer => p_issuer,
+    p_audience => p_audience,
+    p_origin => p_origin,
+    p_secret => p_secret
+  );
+$function$;
+
+create or replace function public.supabash_test_revoke_verifier(p_key_id text)
+returns void
+language sql
+security definer
+set search_path = pg_catalog, public
+as $function$
+  select public.supabash_revoke_capability_verifier(p_key_id);
 $function$;
 
 create or replace function public.supabash_test_set_revision_time(
@@ -129,11 +126,13 @@ revoke all on function public.supabash_test_fail_next_commit(uuid) from public, 
 revoke all on function public.supabash_test_clear_commit_failure(uuid) from public, anon, authenticated;
 revoke all on function public.supabash_test_manifest_stats(uuid) from public, anon, authenticated;
 revoke all on function public.supabash_test_register_verifier(text, text, text, text, text) from public, anon, authenticated;
+revoke all on function public.supabash_test_revoke_verifier(text) from public, anon, authenticated;
 revoke all on function public.supabash_test_set_revision_time(uuid, uuid[], timestamptz) from public, anon, authenticated;
 grant execute on function public.supabash_test_fail_next_commit(uuid) to service_role;
 grant execute on function public.supabash_test_clear_commit_failure(uuid) to service_role;
 grant execute on function public.supabash_test_manifest_stats(uuid) to service_role;
 grant execute on function public.supabash_test_register_verifier(text, text, text, text, text) to service_role;
+grant execute on function public.supabash_test_revoke_verifier(text) to service_role;
 grant execute on function public.supabash_test_set_revision_time(uuid, uuid[], timestamptz) to service_role;
 
 notify pgrst, 'reload schema';

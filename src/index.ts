@@ -21,7 +21,14 @@ import {
 } from './api/errors.js';
 import { POSTGRES_WORKSPACE_CAPABILITIES as postgresWorkspaceCapabilities } from './api/postgres.js';
 import { Supabash as openWorkspace, SupabashError as WorkspaceError } from './api/supabash.js';
-import { createDelegatedCapability as signDelegatedCapability } from './capability/create.js';
+import {
+  createDelegatedCapability as signDelegatedCapability,
+  createPostgresDelegatedCapability as signPostgresDelegatedCapability,
+} from './capability/create.js';
+import {
+  generateCapabilitySecret as newCapabilitySecret,
+  importCapabilitySecret as loadCapabilitySecret,
+} from './capability/secret.js';
 import {
   verifyDelegatedCapability as checkDelegatedCapability,
   verifyPostgresDelegatedCapability as checkPostgresDelegatedCapability,
@@ -54,12 +61,15 @@ export type {
   CapabilityNonceStore,
   AnyDelegatedCapabilityClaims,
   CreateDelegatedCapabilityInput,
+  CreatePostgresDelegatedCapabilityInput,
   DelegatedCapabilityClaims,
   DelegatedOperation,
   DelegatedVerifier,
   OpenDelegatedOptions,
   PostgresDelegatedCapabilityClaims,
+  PostgresDelegatedVerifier,
   VerifyDelegatedCapabilityInput,
+  VerifyPostgresDelegatedCapabilityInput,
 } from './api/capability.js';
 export type {
   CommitReceipt,
@@ -172,6 +182,9 @@ export const applyPatchOperations = applyWorkspacePatchOperations;
 export const createCommandPolicy = createWorkspaceCommandPolicy;
 export const createWorkspaceFileSystemView = createFileSystemView;
 export const createDelegatedCapability = signDelegatedCapability;
+export const createPostgresDelegatedCapability = signPostgresDelegatedCapability;
+export const generateCapabilitySecret = newCapabilitySecret;
+export const importCapabilitySecret = loadCapabilitySecret;
 export const verifyDelegatedCapability = checkDelegatedCapability;
 export const verifyPostgresDelegatedCapability = checkPostgresDelegatedCapability;
 export const createYamlFrontmatterCodec = yamlFrontmatterCodec;

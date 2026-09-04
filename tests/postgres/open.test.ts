@@ -1,12 +1,11 @@
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test } from 'vitest';
 
 import {
-  createDelegatedCapability,
-  POSTGRES_CAPABILITY_SCHEMA_VERSION,
+  createPostgresDelegatedCapability,
   Supabash,
   type PostgresDelegatedCapabilityClaims,
 } from '../../src/index.ts';
-import { ed25519Pair, verifierFor } from '../support/delegated.ts';
+import { capabilitySecretKey, postgresSampleClaims } from '../support/delegated.ts';
 
 const workspace = '123e4567-e89b-42d3-a456-426614174000';
 
@@ -28,19 +27,12 @@ describe('public Postgres workspace API', () => {
     expect(api.calls[1]?.body).toStrictEqual({});
   });
 
-  test('exchanges a signed binding and consumes the local nonce after open', async () => {
-    const keys = await ed25519Pair();
-    const nonceStore = {
-      consume: vi.fn<(nonce: string, expiresAt: Date) => Promise<boolean>>(() =>
-        Promise.resolve(true),
-      ),
-    };
-    const verifier = verifierFor(keys.publicKey, { nonceStore });
+  test('takes its delegation from the grant the database minted', async () => {
     const claims = postgresClaims();
-    const capability = await createDelegatedCapability({
+    const capability = await createPostgresDelegatedCapability({
       claims,
       keyId: 'k1',
-      privateKey: keys.privateKey,
+      secretKey: await capabilitySecretKey(),
     });
     const api = new FakePostgresApi(claims);
 
@@ -50,7 +42,6 @@ describe('public Postgres workspace API', () => {
       fetch: api.fetch,
       serviceRoleKey: 'sb_secret_test',
       supabaseUrl: claims.origin,
-      verifier,
     });
 
     await expect(opened.fs.writeFile('/denied.md', 'no')).rejects.toMatchObject({
@@ -61,7 +52,6 @@ describe('public Postgres workspace API', () => {
       calls: api.calls.map(({ path }) => path),
       exchange: api.calls[0]?.body,
       load: api.calls[1]?.body,
-      nonceCalls: nonceStore.consume.mock.calls.length,
       delegation: opened.delegation,
       snapshot: opened.committedSnapshot(),
     }).toStrictEqual({
@@ -69,7 +59,6 @@ describe('public Postgres workspace API', () => {
       calls: ['/rest/v1/rpc/supabash_exchange_capability', '/rest/v1/rpc/supabash_load_workspace'],
       exchange: { p_capability: capability },
       load: { p_delegated_grant: 'opaque-grant', p_workspace_id: workspace },
-      nonceCalls: 1,
       delegation: {
         actor: 'delegated:delegated-subject',
         correlationId: 'corr-postgres',
@@ -84,12 +73,11 @@ describe('public Postgres workspace API', () => {
   });
 
   test('rejects unexpected or duplicate operation sets before exchange', async () => {
-    const keys = await ed25519Pair();
     const claims = postgresClaims();
-    const capability = await createDelegatedCapability({
+    const capability = await createPostgresDelegatedCapability({
       claims,
       keyId: 'k1',
-      privateKey: keys.privateKey,
+      secretKey: await capabilitySecretKey(),
     });
     const api = new FakePostgresApi(claims);
     const common = {
@@ -97,7 +85,6 @@ describe('public Postgres workspace API', () => {
       fetch: api.fetch,
       serviceRoleKey: 'sb_secret_test',
       supabaseUrl: claims.origin,
-      verifier: verifierFor(keys.publicKey),
     };
 
     await expect(
@@ -109,39 +96,54 @@ describe('public Postgres workspace API', () => {
     expect(api.calls).toStrictEqual([]);
   });
 
-  test('does not consume the local nonce when the bound snapshot cannot open', async () => {
-    const keys = await ed25519Pair();
-    const nonceStore = {
-      consume: vi.fn<(nonce: string, expiresAt: Date) => Promise<boolean>>(() =>
-        Promise.resolve(true),
-      ),
-    };
+  test('rejects a grant that does not match the capability it presented', async () => {
     const claims = postgresClaims();
-    const capability = await createDelegatedCapability({
+    const capability = await createPostgresDelegatedCapability({
       claims,
       keyId: 'k1',
-      privateKey: keys.privateKey,
+      secretKey: await capabilitySecretKey(),
     });
+    const api = new FakePostgresApi({ ...claims, ops: ['read', 'write', 'commit'] });
 
     await expect(
       Supabash.openPostgresDelegated({
         capability,
-        fetch: new FakePostgresApi(claims, true).fetch,
+        fetch: api.fetch,
         serviceRoleKey: 'sb_secret_test',
         supabaseUrl: claims.origin,
-        verifier: verifierFor(keys.publicKey, { nonceStore }),
       }),
-    ).rejects.toMatchObject({ code: 'STORAGE' });
-    expect(nonceStore.consume).not.toHaveBeenCalled();
+    ).rejects.toMatchObject({ code: 'INVALID_CAPABILITY' });
+    expect(api.calls.map(({ path }) => path)).toStrictEqual([
+      '/rest/v1/rpc/supabash_exchange_capability',
+    ]);
+  });
+
+  test('rejects a capability minted for another project origin', async () => {
+    const claims = postgresClaims();
+    const capability = await createPostgresDelegatedCapability({
+      claims,
+      keyId: 'k1',
+      secretKey: await capabilitySecretKey(),
+    });
+    const api = new FakePostgresApi(claims);
+
+    await expect(
+      Supabash.openPostgresDelegated({
+        capability,
+        fetch: api.fetch,
+        serviceRoleKey: 'sb_secret_test',
+        supabaseUrl: 'https://other.supabase.co',
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_CAPABILITY' });
+    expect(api.calls).toStrictEqual([]);
   });
 
   test('requires read permission to project a delegated Postgres workspace', async () => {
-    const keys = await ed25519Pair();
-    const claims = { ...postgresClaims(), ops: ['history'] as const };
-    const capability = await createDelegatedCapability({
+    const claims = postgresClaims({ ops: ['history'] });
+    const capability = await createPostgresDelegatedCapability({
       claims,
       keyId: 'k1',
-      privateKey: keys.privateKey,
+      secretKey: await capabilitySecretKey(),
     });
     const api = new FakePostgresApi(claims);
 
@@ -151,10 +153,27 @@ describe('public Postgres workspace API', () => {
         fetch: api.fetch,
         serviceRoleKey: 'sb_secret_test',
         supabaseUrl: claims.origin,
-        verifier: verifierFor(keys.publicKey),
       }),
     ).rejects.toMatchObject({ code: 'INVALID_CAPABILITY' });
     expect(api.calls).toStrictEqual([]);
+  });
+
+  test('surfaces a snapshot failure after the grant is minted', async () => {
+    const claims = postgresClaims();
+    const capability = await createPostgresDelegatedCapability({
+      claims,
+      keyId: 'k1',
+      secretKey: await capabilitySecretKey(),
+    });
+
+    await expect(
+      Supabash.openPostgresDelegated({
+        capability,
+        fetch: new FakePostgresApi(claims, true).fetch,
+        serviceRoleKey: 'sb_secret_test',
+        supabaseUrl: claims.origin,
+      }),
+    ).rejects.toMatchObject({ code: 'STORAGE' });
   });
 });
 
@@ -187,6 +206,7 @@ class FakePostgresApi {
       }
       if (path.endsWith('/supabash_exchange_capability') && this.claims !== undefined) {
         return json({
+          actorSubject: this.claims.sub,
           correlationId: this.claims.corr,
           delegatedGrant: 'opaque-grant',
           expiresAt: new Date(this.claims.exp * 1000).toISOString(),
@@ -206,20 +226,17 @@ class FakePostgresApi {
   );
 }
 
-const postgresClaims = (): PostgresDelegatedCapabilityClaims => ({
-  aud: 'supabash-jobs',
-  backend: 'postgres',
-  corr: 'corr-postgres',
-  exp: Math.floor(Date.now() / 1000) + 300,
-  iat: Math.floor(Date.now() / 1000) - 1,
-  iss: 'https://example.invalid/issuer',
-  nonce: 'postgres-open-nonce',
-  ops: ['read'],
-  origin: 'https://project.supabase.co',
-  sub: 'delegated-subject',
-  sv: POSTGRES_CAPABILITY_SCHEMA_VERSION,
-  workspace,
-});
+const postgresClaims = (
+  overrides: Partial<PostgresDelegatedCapabilityClaims> = {},
+): PostgresDelegatedCapabilityClaims =>
+  postgresSampleClaims({
+    corr: 'corr-postgres',
+    nonce: 'postgres-open-nonce',
+    ops: ['read'],
+    sub: 'delegated-subject',
+    workspace,
+    ...overrides,
+  });
 
 const bearerRequest = (token: string): Request =>
   new Request('https://host.example', { headers: { Authorization: `Bearer ${token}` } });

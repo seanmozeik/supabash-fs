@@ -1,6 +1,8 @@
 import {
   POSTGRES_CAPABILITY_SCHEMA_VERSION,
-  createDelegatedCapability,
+  createPostgresDelegatedCapability,
+  generateCapabilitySecret,
+  importCapabilitySecret,
   type PostgresDelegatedCapabilityClaims,
   Supabash,
 } from '@seanmozeik/supabash-fs';
@@ -159,28 +161,24 @@ const proveDelegated = async (
   core: CoreProof,
   secondUser: TestUser,
 ): Promise<void> => {
-  const keys = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
-  if (!('privateKey' in keys)) {
-    throw new Error('Ed25519 did not return a key pair.');
-  }
+  const secret = generateCapabilitySecret();
+  const secretKey = await importCapabilitySecret(secret);
   const verifier = {
     audience: 'supabash-postgres-integration',
     issuer: 'https://issuer.example.test',
     origin: context.supabaseUrl,
-    publicKeys: { integration: keys.publicKey },
   };
-  await registerVerifier(context, keys.publicKey, verifier);
+  await registerVerifier(context, secret, verifier);
   const claims = delegatedClaims(context, core, verifier);
-  const capability = await createDelegatedCapability({
+  const capability = await createPostgresDelegatedCapability({
     claims,
     keyId: 'integration',
-    privateKey: keys.privateKey,
+    secretKey,
   });
   const delegated = await Supabash.openPostgresDelegated({
     capability,
     serviceRoleKey: context.serviceRoleKey,
     supabaseUrl: context.supabaseUrl,
-    verifier,
   });
   const delegatedText = await delegated.fs.readFile('/docs/update.md');
   assert(delegatedText.includes('edge-runtime-marker'), 'Delegated read failed.');
@@ -192,25 +190,24 @@ const proveDelegated = async (
     'Delegated capability exceeded its admitted operations.',
   );
 
-  const restoreCapability = await createDelegatedCapability({
+  const restoreCapability = await createPostgresDelegatedCapability({
     claims: { ...claims, nonce: `${context.runId}-delegated-restore`, ops: ['read', 'restore'] },
     keyId: 'integration',
-    privateKey: keys.privateKey,
+    secretKey,
   });
   const restoreOnly = await Supabash.openPostgresDelegated({
     capability: restoreCapability,
     serviceRoleKey: context.serviceRoleKey,
     supabaseUrl: context.supabaseUrl,
-    verifier,
   });
   const restorePlan = await restoreOnly.restore(core.seed.revision);
   assert(restorePlan.sourceRevision === core.seed.revision, 'Delegated restore was denied.');
   await expectCode(restoreOnly.history(), 'AUTHORIZATION', 'Restore-only capability read history.');
 
-  const grantCapability = await createDelegatedCapability({
+  const grantCapability = await createPostgresDelegatedCapability({
     claims: { ...claims, nonce: `${context.runId}-delegated-grant` },
     keyId: 'integration',
-    privateKey: keys.privateKey,
+    secretKey,
   });
   const exchange = asRecord(
     await context.serviceRpc('supabash_exchange_capability', { p_capability: grantCapability }),
@@ -224,6 +221,19 @@ const proveDelegated = async (
     p_workspace_id: otherWorkspace,
   });
   assert(!escaped.ok, 'A delegated database grant selected another workspace.');
+
+  const forged = await createPostgresDelegatedCapability({
+    claims: { ...claims, nonce: `${context.runId}-delegated-forged` },
+    keyId: 'integration',
+    secretKey: await importCapabilitySecret(generateCapabilitySecret()),
+  });
+  const forgedExchange = await context.serviceRpcResponse('supabash_exchange_capability', {
+    p_capability: forged,
+  });
+  assert(
+    !forgedExchange.ok,
+    'The database accepted a capability signed with an unregistered secret.',
+  );
 
   context.record('delegated capability workspace and operation isolation');
 };
@@ -249,15 +259,14 @@ const delegatedClaims = (
 
 const registerVerifier = async (
   context: LiveContext,
-  publicKey: CryptoKey,
+  secret: string,
   verifier: { readonly audience: string; readonly issuer: string; readonly origin: string },
 ): Promise<void> => {
-  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', publicKey));
   await context.serviceRpc('supabash_test_register_verifier', {
     p_audience: verifier.audience,
     p_issuer: verifier.issuer,
     p_key_id: 'integration',
     p_origin: verifier.origin,
-    p_public_key_hex: [...raw].map((byte) => byte.toString(16).padStart(2, '0')).join(''),
+    p_secret: secret,
   });
 };

@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.5.0
+
+Breaking. The Postgres install asset no longer needs `pgsodium`, and Postgres
+capabilities use a new signature scheme and schema version.
+
+- Verify Postgres capabilities with HMAC-SHA256 through `extensions.hmac`
+  instead of `pgsodium.crypto_sign_verify_detached`. The install asset creates
+  only `pgcrypto`, so it replays on a stock Supabase PostgreSQL 17 project
+  where `pgsodium` is absent and cannot be installed by a migration. Supabase
+  has deprecated `pgsodium`, and `pgcrypto` offers no public-key signature
+  verification, so an asymmetric check inside SQL is no longer available.
+  Moving the check into the process that opens the session was rejected: that
+  process holds the service role, so it would verify the capability and assert
+  the result, and a caller holding only the service role could mint its own
+  authority. Keeping the check in SQL keeps that caller unable to forge
+  anything. The signing secret is now shared between the minting host and the
+  database. Both could already create authority, so the set of principals that
+  can mint does not grow, and the delegate that presents a capability still
+  holds no key at all.
+- Hold the Postgres capability secret in `supabase_vault` and keep it behind
+  `supabash.capability_signature_valid`. The exchange RPC is owned by the
+  least-privileged `supabash_api` role, which has no vault access, so it never
+  sees the secret. The new function keeps its definer rights with the
+  installing database owner, accepts only a vault name carrying the
+  `supabash_capability_` prefix that the `secret_name` column constraint
+  enforces, so it cannot be steered at an unrelated vault secret, and returns
+  only a boolean. Its execute privilege is revoked from `public`, `anon`,
+  `authenticated`, and `service_role`, and `vault.decrypted_secrets` is not in
+  a PostgREST-exposed schema. The MAC comparison runs under a fresh random
+  blind so it leaks no prefix. This boundary is tighter than the one it
+  replaces, which handed the verification key to `supabash_api`.
+- Add `public.supabash_register_capability_verifier` and
+  `public.supabash_revoke_capability_verifier`. Registration generates the
+  secret, stores it in the vault, and returns it once. Both are revoked from
+  `public`, `anon`, `authenticated`, and `service_role`, so only the database
+  owner can call them, from a migration or `psql`. Removal deletes the vault
+  secrets it created.
+- Raise the Postgres capability schema version to 3 and replace
+  `supabash.capability_verifiers.public_key` with `secret_name`. A schema
+  version 2 capability and an Ed25519 verifier row are no longer accepted.
+- Add `createPostgresDelegatedCapability`, `importCapabilitySecret`, and
+  `generateCapabilitySecret`. `createDelegatedCapability` now signs only
+  storage capabilities and rejects Postgres claims.
+- Remove `verifier` from `OpenPostgresDelegatedOptions`. A delegate holds no
+  verification key, so `openPostgresDelegated` takes the delegation details
+  from the grant the database minted, including a new `actorSubject` field on
+  the exchange result. The presented claims are read unverified only to refuse
+  a wrong request early and to detect a response that does not match the
+  capability that was sent. The local nonce store no longer applies to this
+  path; the database nonce table is authoritative.
+- Keep Ed25519 for storage capabilities. Their verifier is the delegate itself,
+  so it must hold a public key and must not be able to mint.
+- Type `verifyPostgresDelegatedCapability` against the new
+  `PostgresDelegatedVerifier`, which carries `secretKeys`. Only a party that
+  already holds the shared secret can verify a Postgres capability locally.
+
 ## 0.4.2
 
 - Describe the supported compound Bash syntax in the shared AI SDK tool

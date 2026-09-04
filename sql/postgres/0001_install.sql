@@ -3,7 +3,6 @@
 begin;
 
 create extension if not exists pgcrypto with schema extensions;
-create extension if not exists pgsodium;
 
 do $role$
 begin
@@ -15,7 +14,7 @@ end
 $role$;
 
 grant supabash_api to postgres;
-grant usage on schema extensions, pgsodium to supabash_api;
+grant usage on schema extensions to supabash_api;
 grant usage, create on schema public to supabash_api;
 
 create schema supabash;
@@ -404,7 +403,7 @@ create table supabash.checkpoints (
 
 create table supabash.capability_verifiers (
   key_id text primary key check (key_id <> '' and octet_length(key_id) <= 255),
-  public_key bytea not null check (octet_length(public_key) = 32),
+  secret_name text not null check (secret_name ~ '^supabash_capability_[A-Za-z0-9._-]{1,235}$'),
   issuer text not null check (issuer <> '' and octet_length(issuer) <= 2048),
   audience text not null check (audience <> '' and octet_length(audience) <= 2048),
   origin text not null check (origin <> '' and octet_length(origin) <= 2048),
@@ -674,11 +673,70 @@ as $function$
   where r.workspace_id = p_workspace_id and r.revision_id = p_revision_id;
 $function$;
 
+/*
+ * Verifies one capability MAC without disclosing the secret.
+ *
+ * `public.supabash_exchange_capability` is owned by the least-privileged
+ * `supabash_api` role, which has no vault access. This function keeps its
+ * definer rights with the installing database owner, reads one vault secret,
+ * and returns only a boolean. The name must carry the package prefix that
+ * `supabash.capability_verifiers.secret_name` already enforces, so the
+ * function cannot be steered at an unrelated vault secret. The comparison
+ * runs under a fresh random blind, so it leaks no prefix of either MAC.
+ */
+create function supabash.capability_signature_valid(
+  p_secret_name text,
+  p_signing_input bytea,
+  p_signature bytea
+)
+returns boolean
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, supabash, extensions
+as $function$
+declare
+  v_secret_text text;
+  v_secret bytea;
+  v_blind bytea;
+begin
+  if coalesce(p_secret_name, '') !~ '^supabash_capability_[A-Za-z0-9._-]{1,235}$' then
+    raise exception using
+      errcode = '42501',
+      message = 'SUPABASH_CAPABILITY_SECRET_UNAVAILABLE';
+  end if;
+
+  begin
+    select s.decrypted_secret into v_secret_text
+    from vault.decrypted_secrets s
+    where s.name = p_secret_name;
+    v_secret := supabash.base64url_decode(coalesce(v_secret_text, ''));
+  exception when others then
+    raise exception using
+      errcode = '42501',
+      message = 'SUPABASH_CAPABILITY_SECRET_UNAVAILABLE';
+  end;
+  if octet_length(v_secret) < 32 then
+    raise exception using
+      errcode = '42501',
+      message = 'SUPABASH_CAPABILITY_SECRET_UNAVAILABLE';
+  end if;
+
+  v_blind := extensions.gen_random_bytes(32);
+  return extensions.hmac(p_signature, v_blind, 'sha256')
+    = extensions.hmac(
+      extensions.hmac(p_signing_input, v_secret, 'sha256'),
+      v_blind,
+      'sha256'
+    );
+end
+$function$;
+
 create function public.supabash_exchange_capability(p_capability text)
 returns jsonb
 language plpgsql
 security definer
-set search_path = pg_catalog, supabash, extensions, pgsodium
+set search_path = pg_catalog, supabash, extensions
 set row_security = on
 as $function$
 declare
@@ -719,10 +777,10 @@ begin
   end;
 
   if jsonb_typeof(v_header) <> 'object'
-    or v_header ->> 'alg' <> 'EdDSA'
+    or v_header ->> 'alg' <> 'HS256'
     or v_header ->> 'typ' <> 'JWS'
     or coalesce(v_header ->> 'kid', '') = ''
-    or octet_length(v_signature) <> 64
+    or octet_length(v_signature) <> 32
   then
     raise exception using errcode = '22023', message = 'SUPABASH_INVALID_CAPABILITY';
   end if;
@@ -730,10 +788,14 @@ begin
   select k.* into v_verifier
   from supabash.capability_verifiers k
   where k.key_id = v_header ->> 'kid' and k.active;
-  if not found or not pgsodium.crypto_sign_verify_detached(
-    v_signature,
+  if not found then
+    raise exception using errcode = '22023', message = 'SUPABASH_INVALID_CAPABILITY';
+  end if;
+
+  if not supabash.capability_signature_valid(
+    v_verifier.secret_name,
     convert_to(v_parts[1] || '.' || v_parts[2], 'UTF8'),
-    v_verifier.public_key
+    v_signature
   ) then
     raise exception using errcode = '22023', message = 'SUPABASH_INVALID_CAPABILITY';
   end if;
@@ -744,7 +806,7 @@ begin
     or v_payload ->> 'aud' <> v_verifier.audience
     or v_payload ->> 'origin' <> v_verifier.origin
     or jsonb_typeof(v_payload -> 'sv') <> 'number'
-    or (v_payload ->> 'sv')::integer <> 2
+    or (v_payload ->> 'sv')::integer <> 3
     or jsonb_typeof(v_payload -> 'iat') <> 'number'
     or jsonb_typeof(v_payload -> 'exp') <> 'number'
     or jsonb_typeof(v_payload -> 'ops') <> 'array'
@@ -829,12 +891,82 @@ begin
   );
 
   return jsonb_build_object(
+    'actorSubject', v_actor_subject,
     'delegatedGrant', v_raw_grant,
     'expiresAt', to_timestamp(v_exp),
     'workspace', v_workspace,
     'operations', to_jsonb(v_ops),
     'correlationId', v_payload ->> 'corr'
   );
+end
+$function$;
+
+create function public.supabash_register_capability_verifier(
+  p_key_id text,
+  p_issuer text,
+  p_audience text,
+  p_origin text,
+  p_secret text default null,
+  p_clock_skew_seconds integer default 60,
+  p_max_lifetime_seconds integer default 900
+)
+returns text
+language plpgsql
+volatile
+set search_path = pg_catalog, supabash, extensions
+as $function$
+declare
+  v_secret_name text := 'supabash_capability_' || p_key_id;
+  v_secret text := coalesce(p_secret, supabash.base64url_encode(extensions.gen_random_bytes(32)));
+  v_secret_id uuid;
+begin
+  if coalesce(p_key_id, '') = '' or v_secret_name !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$' then
+    raise exception using errcode = '22023', message = 'SUPABASH_INVALID_CAPABILITY_KEY_ID';
+  end if;
+  if octet_length(supabash.base64url_decode(v_secret)) < 32 then
+    raise exception using errcode = '22023', message = 'SUPABASH_INVALID_CAPABILITY_SECRET';
+  end if;
+
+  select s.id into v_secret_id from vault.secrets s where s.name = v_secret_name;
+  if v_secret_id is null then
+    perform vault.create_secret(v_secret, v_secret_name);
+  else
+    perform vault.update_secret(v_secret_id, v_secret);
+  end if;
+
+  insert into supabash.capability_verifiers (
+    key_id, secret_name, issuer, audience, origin, clock_skew_seconds, max_lifetime_seconds
+  ) values (
+    p_key_id, v_secret_name, p_issuer, p_audience, p_origin,
+    p_clock_skew_seconds, p_max_lifetime_seconds
+  )
+  on conflict (key_id) do update set
+    secret_name = excluded.secret_name,
+    issuer = excluded.issuer,
+    audience = excluded.audience,
+    origin = excluded.origin,
+    clock_skew_seconds = excluded.clock_skew_seconds,
+    max_lifetime_seconds = excluded.max_lifetime_seconds,
+    active = true;
+
+  return v_secret;
+end
+$function$;
+
+create function public.supabash_revoke_capability_verifier(p_key_id text)
+returns void
+language plpgsql
+volatile
+set search_path = pg_catalog, supabash
+as $function$
+declare
+  v_secret_name text;
+begin
+  delete from supabash.capability_verifiers where key_id = p_key_id
+  returning secret_name into v_secret_name;
+  if v_secret_name is not null then
+    delete from vault.secrets where name = v_secret_name;
+  end if;
 end
 $function$;
 
@@ -1843,6 +1975,11 @@ alter function public.supabash_purge(uuid, integer, bigint, boolean, text) owner
 
 revoke create on schema public from supabash_api;
 
+revoke all on function public.supabash_register_capability_verifier(
+  text, text, text, text, text, integer, integer
+) from public, anon, authenticated, service_role;
+revoke all on function public.supabash_revoke_capability_verifier(text)
+  from public, anon, authenticated, service_role;
 revoke all on function public.supabash_exchange_capability(text) from public, anon, authenticated;
 grant execute on function public.supabash_exchange_capability(text) to service_role;
 revoke all on function public.supabash_create_workspace() from public, anon, service_role;

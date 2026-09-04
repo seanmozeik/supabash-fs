@@ -8,20 +8,14 @@ import { createStorageWorkspace } from '../core/workspace.js';
 import { jwtRole } from '../supabase/jwt.js';
 import { createSupabaseStorage } from '../supabase/storage.js';
 import { guardWorkspace } from './guard.js';
-import { consumeDelegatedCapabilityNonce, verifyDelegatedCapabilityClaims } from './verify.js';
+import { consumeDelegatedCapabilityNonce, verifyStorageCapabilityClaims } from './verify.js';
 
 export const openDelegated = async (options: OpenDelegatedOptions): Promise<Workspace> => {
   assertServiceRoleKey(options.serviceRoleKey);
-  const claims = await verifyDelegatedCapabilityClaims({
+  const claims = await verifyStorageCapabilityClaims({
     capability: options.capability,
     verifier: options.verifier,
   });
-  if ('backend' in claims) {
-    throw new SupabashError(
-      'INVALID_CAPABILITY',
-      'Capability backend does not match open options.',
-    );
-  }
   if (claims.bucket !== options.bucket) {
     throw new SupabashError('INVALID_CAPABILITY', 'Capability bucket does not match open options.');
   }

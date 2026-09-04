@@ -4,29 +4,33 @@ import { asUnknownRecord } from '../api/json.js';
 const text = new TextEncoder();
 const json = new TextDecoder();
 
+export type CapabilityAlgorithm = 'EdDSA' | 'HS256';
+
 export const compactJws = async (
+  algorithm: CapabilityAlgorithm,
   header: Readonly<Record<string, string>>,
   payload: AnyDelegatedCapabilityClaims,
-  privateKey: CryptoKey,
+  key: CryptoKey,
 ): Promise<string> => {
   const signingInput = `${b64urlJson(header)}.${b64urlJson(payload)}`;
   const signature = await crypto.subtle.sign(
-    { name: 'Ed25519' },
-    privateKey,
+    signatureParameters(algorithm),
+    key,
     text.encode(signingInput),
   );
   return `${signingInput}.${bytesToB64url(new Uint8Array(signature))}`;
 };
 
 export const verifyCompactJws = async (
+  algorithm: CapabilityAlgorithm,
   capability: string,
-  publicKey: CryptoKey,
+  key: CryptoKey,
 ): Promise<{ header: Record<string, unknown>; payload: unknown }> => {
   const [headerPart, payloadPart, signaturePart] = splitCompact(capability);
   const signingInput = `${headerPart}.${payloadPart}`;
   const valid = await crypto.subtle.verify(
-    { name: 'Ed25519' },
-    publicKey,
+    signatureParameters(algorithm),
+    key,
     copyBytes(b64urlToBytes(signaturePart)),
     text.encode(signingInput),
   );
@@ -36,11 +40,13 @@ export const verifyCompactJws = async (
   return { header: parseJsonObject(b64urlToJson(headerPart)), payload: b64urlToJson(payloadPart) };
 };
 
-export const jwsKeyId = (header: Record<string, unknown>): string => {
-  const algorithm = header['alg'];
+export const jwsKeyId = (
+  header: Record<string, unknown>,
+  algorithm: CapabilityAlgorithm,
+): string => {
   const keyId = header['kid'];
-  if (algorithm !== 'EdDSA' || typeof keyId !== 'string' || keyId.length === 0) {
-    throw new Error('Capability header is not an EdDSA key.');
+  if (header['alg'] !== algorithm || typeof keyId !== 'string' || keyId.length === 0) {
+    throw new Error(`Capability header is not a keyed ${algorithm} header.`);
   }
   return keyId;
 };
@@ -49,6 +55,16 @@ export const peekCompactJwsHeader = (capability: string): Record<string, unknown
   const [headerPart] = splitCompact(capability);
   return parseJsonObject(b64urlToJson(headerPart));
 };
+
+export const peekCompactJwsPayload = (capability: string): Record<string, unknown> => {
+  const [, payloadPart] = splitCompact(capability);
+  return parseJsonObject(b64urlToJson(payloadPart));
+};
+
+const signatureParameters = (
+  algorithm: CapabilityAlgorithm,
+): AlgorithmIdentifier | HmacKeyAlgorithm =>
+  algorithm === 'EdDSA' ? { name: 'Ed25519' } : { name: 'HMAC', hash: { name: 'SHA-256' } };
 
 const splitCompact = (capability: string): readonly [string, string, string] => {
   const parts = capability.split('.');
