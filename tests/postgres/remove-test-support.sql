@@ -14,6 +14,8 @@ end
 $verifier$;
 
 drop function if exists public.supabash_test_revoke_verifier(text);
+drop function if exists public.supabash_test_privilege_report;
+drop function if exists public.supabash_test_secret_present;
 drop function if exists public.supabash_test_register_verifier(text, text, text, text);
 drop function if exists public.supabash_test_set_revision_time(uuid, uuid[], timestamptz);
 drop function if exists public.supabash_test_manifest_stats(uuid);
