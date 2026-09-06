@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.6.0
+
+Breaking. Agent tools now bind to `createTools({ filesystem })`. Pass a workspace's
+`fs`, a `createWorkspaceFileSystemView(...)` result, or a mounted filesystem's `fs`.
+The result returns `filesystem` alongside `tools`. Hosts retain their workspace
+handles for commits and history. The former `workspace` and `view` tool options
+are replaced by this explicit filesystem input.
+
+- Compose authorized private workspaces and shared snapshots with
+  `createMountedFileSystem`. Each mount has explicit access, source identity and
+  a fixed visible path. Shared content retains its own publication and lifecycle.
+- Create immutable shared snapshots from strings, byte arrays, table projections
+  or retained workspace revisions. Snapshot manifests include content digests
+  and source revisions. Enforce file and byte limits during construction.
+- Translate visible tool paths and backing retrieval paths through the mount
+  registry, including scoped roots and hidden directories.
+- Enforce read-only files, mount boundaries and hidden descendants through the
+  filesystem used by Bash and Apply Patch. Reject cross-mount moves and links;
+  support explicit copies into writable mounts. Read-only buffers and timestamps
+  are detached from their backing data.
+- Add `readFileBuffer` to `ReadonlyWorkspaceView` for lossless retained binary
+  content. Custom implementations of that interface must supply the new method.
+- Document shared-file publishing, upserts, deletion, rollback, read-only
+  credentials, release selection, caching and table-backed sources in
+  `docs/shared-filesystems.md`.
+
+The 0.5 Postgres schema, capability format, stored paths and revision format remain
+compatible. Upgrading the library requires no database reinstall or memory backfill.
+
 ## 0.5.0
 
 Breaking. The Postgres install asset no longer needs `pgsodium`, and Postgres

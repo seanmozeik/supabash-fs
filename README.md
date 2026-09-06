@@ -10,6 +10,11 @@ The Storage backend remains byte-oriented and lazy. The Postgres backend is an
 explicit UTF-8 text tree with an atomic commit transaction and a snapshot pinned
 to one immutable revision.
 
+Agents can also receive a composed filesystem with private writable mounts and
+shared read-only snapshots. The host commits each writable workspace separately.
+See [shared filesystems and publishing](docs/shared-filesystems.md) for the full
+publisher/reader workflow, table-backed sources, revisions and migration to 0.6.
+
 The public API can still change before version 1.0.
 
 ## Architecture
@@ -289,37 +294,37 @@ Apply Patch never calls `commit`. Bash never calls `commit`.
 ## AI SDK tools
 
 ```ts
+import { createWorkspaceFileSystemView } from '@seanmozeik/supabash-fs';
 import { createTools } from '@seanmozeik/supabash-fs/ai-sdk';
 import { generateText } from 'ai';
 
+const filesystem = createWorkspaceFileSystemView(workspace.fs, {
+  root: '/memory',
+  hiddenRoots: ['private'],
+});
 const bound = await createTools({
-  workspace,
+  filesystem,
   bash: { policyOptions: { allowNetwork: false } },
   applyPatch: true,
-  view: { root: '/memory', hiddenRoots: ['private'] },
   viewImage: { enabled: false },
 });
 
 const result = await generateText({ model, tools: bound.tools, prompt });
 
-bound.workspace === workspace; // true
+bound.filesystem === filesystem; // true
 ```
 
-The factory binds tools to an already-open workspace. It does not open a
-second filesystem and does not commit after a tool call. Tool descriptions
-state that the root is already scoped. The model cannot select a bucket, user,
-prefix, access token, or storage client. The return value keeps the host
-workspace beside the AI SDK `ToolSet`; the workspace is never inserted into
-the agent-facing tool map.
+The factory binds all tools to the supplied filesystem. It can be a workspace's
+`fs`, a scoped view, or `createMountedFileSystem(...).fs`. Tools stage edits; the
+host retains the original workspace handle for commit, history and restore.
 
-The optional `view` is shared by Bash, Apply Patch, and `view_image`. `root`
-presents one workspace subtree to the tools as `/`. `hiddenRoots` are relative
-to that presented root and do not appear in listings, glob results, or direct
-reads. The returned host workspace remains complete, so trusted code can still
-commit, inspect history, or work with private paths. Existing symbolic-link
-parents cannot escape the view.
+`createWorkspaceFileSystemView` presents one subtree as `/` and hides configured
+paths from tools. `createMountedFileSystem` composes independent sources under
+visible mount points such as `/memories` and `/docs`. Use the latter when the
+agent needs personal writable files alongside shared read-only content. Both
+Bash and Apply Patch use the exact same filesystem and permission checks.
 
-Optional `view_image` reads only from `workspace.fs`, allowlists image MIME
+Optional `view_image` reads only from the supplied filesystem, allowlists image MIME
 types, enforces a byte limit before decoding, and rejects symbolic-link
 escapes. Its model output is an AI SDK file-content part with the detected MIME
 type and filename. The production build keeps this implementation in a
@@ -351,7 +356,7 @@ const count = defineCommand('count', async (_args, context) => ({
 }));
 
 await createTools({
-  workspace,
+  filesystem: workspace.fs,
   bash: { customCommands: [count], policyOptions: { extraAllowCommands: ['count'] } },
 });
 ```
