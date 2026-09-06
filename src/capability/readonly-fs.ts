@@ -24,7 +24,12 @@ export const restrictFileSystem = (inner: IFileSystem, access: FileSystemAccess)
     mkdir: deny,
     mv: deny,
     readFile: readable ? inner.readFile.bind(inner) : deny,
-    readFileBuffer: readable ? inner.readFileBuffer.bind(inner) : deny,
+    readFileBuffer: readable
+      ? async (path) => {
+          const buffer = await inner.readFileBuffer(path);
+          return buffer.slice();
+        }
+      : deny,
     readdir: readable ? inner.readdir.bind(inner) : deny,
     readlink: readable ? inner.readlink.bind(inner) : deny,
     realpath: readable ? inner.realpath.bind(inner) : deny,
