@@ -139,7 +139,8 @@ export const readWorkspaceSnapshot = async (options: {
     const bytes = await view.readFileBuffer(entry.path);
     if (
       bytes.length !== entry.size ||
-      (entry.contentHash !== undefined && (await sha256(bytes)) !== entry.contentHash)
+      entry.contentHash === undefined ||
+      (await sha256(bytes)) !== entry.contentHash
     ) {
       throw new SupabashError(
         'HISTORY_CORRUPTION',
