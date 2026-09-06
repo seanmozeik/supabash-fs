@@ -131,7 +131,18 @@ export const readWorkspaceSnapshot = async (options: {
   let byteCount = 0;
   for (const entry of entries) {
     const content = await view.readFile(entry.path);
-    byteCount += new TextEncoder().encode(content).length;
+    const bytes = new TextEncoder().encode(content);
+    if (
+      bytes.length !== entry.size ||
+      (entry.contentHash !== undefined && (await sha256(bytes)) !== entry.contentHash)
+    ) {
+      throw new SupabashError(
+        'UNSUPPORTED_CONTENT',
+        'Revision file is not a lossless UTF-8 text projection.',
+        { path: entry.path },
+      );
+    }
+    byteCount += bytes.length;
     if (byteCount > maxBytes) {
       throw new SupabashError('QUOTA_EXCEEDED', 'Revision content exceeds snapshot limits.');
     }

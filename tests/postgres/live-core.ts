@@ -131,7 +131,7 @@ const proveTools = async (
   seed: CommitReceipt,
 ): Promise<CommitReceipt> => {
   const workspace = await context.open(accessToken, workspaceId);
-  const { tools } = await createTools({ workspace });
+  const { tools } = await createTools({ filesystem: workspace.fs });
   await bash(tools, "grep -R -n 'edge-runtime-marker' /docs");
   await bash(tools, "find /docs -type f -name '*.md' | sort");
   const unicode = await bash(tools, "cat '/unicode/患者-Δ-🙂.md'");

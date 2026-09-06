@@ -4,5 +4,5 @@ import type { ToolSet } from 'ai';
 
 export const bindWorkspaceTools = (
   workspace: Workspace,
-): Promise<{ readonly tools: ToolSet; readonly workspace: Workspace }> =>
-  createTools({ workspace });
+): Promise<{ readonly tools: ToolSet; readonly filesystem: Workspace['fs'] }> =>
+  createTools({ filesystem: workspace.fs });

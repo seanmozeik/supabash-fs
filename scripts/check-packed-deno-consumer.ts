@@ -76,7 +76,7 @@ const installSql = await Deno.readTextFile(POSTGRES_INSTALL_SQL_URL);
 if (!installSql.includes('create schema supabash')) throw new Error('Missing Postgres install SQL.');
 const result: Promise<WorkspaceTools> | undefined = undefined;
 const workspace = { fs: new InMemoryFs() } as unknown as import('@seanmozeik/supabash-fs').Workspace;
-const bound = await createTools({ view: { hiddenRoots: ['private'] }, viewImage: { enabled: true }, workspace });
+const bound = await createTools({ filesystem: workspace.fs, viewImage: { enabled: true } });
 if (!Object.hasOwn(bound.tools, 'view_image')) throw new Error('Missing view_image.');
 void result;
 `,

@@ -1,7 +1,5 @@
-import type { CustomCommand } from 'just-bash/browser';
+import type { CustomCommand, IFileSystem } from 'just-bash/browser';
 
-import type { Workspace } from '../api/contracts.js';
-import type { WorkspaceFileSystemViewOptions } from '../core/filesystem-view.js';
 import type { ApplyPatchOptions } from '../patch/operations.js';
 import type { CommandInspector, CommandPolicyOptions } from '../policy/types.js';
 
@@ -38,6 +36,6 @@ export interface CreateToolsOptions {
   readonly applyPatch?: boolean | ApplyPatchOptions;
   readonly bash?: BashToolOptions;
   readonly viewImage?: ViewImageOptions;
-  readonly view?: WorkspaceFileSystemViewOptions;
-  readonly workspace: Workspace;
+  /** The authorized tool view. Commit and history handles stay with the host. */
+  readonly filesystem: IFileSystem;
 }

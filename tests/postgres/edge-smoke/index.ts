@@ -25,7 +25,7 @@ runtime.serve(async (request) => {
       supabaseUrl,
       workspace: workspaceId,
     });
-    const { tools } = await createTools({ workspace: openedWorkspace });
+    const { tools } = await createTools({ filesystem: openedWorkspace.fs });
     const { bash } = tools;
     if (bash?.execute === undefined) {
       throw new Error('Bash tool is unavailable.');

@@ -99,7 +99,7 @@ export const proveDelegatedAccess = async (input: {
     'A capability for another prefix restored the first workspace revision.',
   );
 
-  const { tools } = await createTools({ workspace });
+  const { tools } = await createTools({ filesystem: workspace.fs });
   const patched = await invokeTool(tools['apply_patch'], {
     callId: 'delegated-update',
     operation: { diff: '-from-job\n+still-scoped\n', path: '/delegated.md', type: 'update_file' },
