@@ -1,4 +1,4 @@
-import type { IFileSystem } from 'just-bash/browser';
+import type { FsStat, IFileSystem } from 'just-bash/browser';
 
 import { SupabashError } from '../api/errors.js';
 
@@ -20,14 +20,14 @@ export const restrictFileSystem = (inner: IFileSystem, access: FileSystemAccess)
     exists: readable ? inner.exists.bind(inner) : deny,
     getAllPaths: readable ? inner.getAllPaths.bind(inner) : denySync,
     link: deny,
-    lstat: readable ? inner.lstat.bind(inner) : deny,
+    lstat: readable ? async (path) => detachedStat(await inner.lstat(path)) : deny,
     mkdir: deny,
     mv: deny,
     readFile: readable ? inner.readFile.bind(inner) : deny,
     readFileBuffer: readable
       ? async (path) => {
           const buffer = await inner.readFileBuffer(path);
-          return buffer.slice();
+          return new Uint8Array(buffer);
         }
       : deny,
     readdir: readable ? inner.readdir.bind(inner) : deny,
@@ -35,7 +35,7 @@ export const restrictFileSystem = (inner: IFileSystem, access: FileSystemAccess)
     realpath: readable ? inner.realpath.bind(inner) : deny,
     resolvePath: readable ? inner.resolvePath.bind(inner) : denySync,
     rm: deny,
-    stat: readable ? inner.stat.bind(inner) : deny,
+    stat: readable ? async (path) => detachedStat(await inner.stat(path)) : deny,
     symlink: deny,
     utimes: deny,
     writeFile: deny,
@@ -48,6 +48,8 @@ export const restrictFileSystem = (inner: IFileSystem, access: FileSystemAccess)
   }
   return fs;
 };
+
+const detachedStat = (stat: FsStat): FsStat => ({ ...stat, mtime: new Date(stat.mtime) });
 
 const denied = (access: FileSystemAccess): SupabashError =>
   new SupabashError(

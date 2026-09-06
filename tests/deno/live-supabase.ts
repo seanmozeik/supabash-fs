@@ -49,7 +49,7 @@ await reset(firstToken);
 await reset(secondToken);
 
 const first = await open(firstToken);
-const { tools: firstTools } = await createTools({ workspace: first });
+const { tools: firstTools } = await createTools({ filesystem: first.fs });
 await first.fs.mkdir('/notes', { recursive: true });
 await first.fs.writeFile('/notes/alpha.md', 'durable memory\n');
 await first.fs.symlink('/notes/alpha.md', '/current');
@@ -119,7 +119,7 @@ assert(restored.parentRevision === dirty.revision, 'Restore did not create a for
 assert((await reopened.fs.readFile('/notes.md')) === 'patched live\n', 'Restore did not apply.');
 
 const second = await open(secondToken);
-const { tools: secondTools } = await createTools({ workspace: second });
+const { tools: secondTools } = await createTools({ filesystem: second.fs });
 assert(!(await second.fs.exists('/notes.md')), 'The second user saw the first user workspace.');
 assert(!(await second.fs.exists('/notes')), 'The second user listed the first user directory.');
 const secondSearch = await invokeTool(secondTools['bash'], { command: 'grep -R "patched" /' });

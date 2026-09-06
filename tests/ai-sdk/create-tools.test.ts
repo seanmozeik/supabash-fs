@@ -4,13 +4,14 @@ import { defineCommand } from 'just-bash/browser';
 import { describe, expect, test } from 'vitest';
 
 import { createTools } from '../../src/ai-sdk/index.ts';
+import { createWorkspaceFileSystemView } from '../../src/core/filesystem-view.ts';
 import { createStorageWorkspace } from '../../src/core/workspace.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
 describe('workspace AI SDK tools', () => {
   test('describes the supported compound Bash surface once at the tool boundary', async () => {
     const workspace = await createStorageWorkspace(new MemoryStorage());
-    const { tools } = await createTools({ workspace });
+    const { tools } = await createTools({ filesystem: workspace.fs });
 
     expect(tools['bash']?.description).toContain(
       'pipelines, redirection, command and process substitution, loops, conditionals, functions, grouped commands, command chains, and find -exec',
@@ -20,7 +21,7 @@ describe('workspace AI SDK tools', () => {
   test('runs Bash and Apply Patch on one staged filesystem without committing', async () => {
     const storage = new MemoryStorage();
     const workspace = await createStorageWorkspace(storage);
-    const { tools } = await createTools({ workspace });
+    const { tools } = await createTools({ filesystem: workspace.fs });
     expect({
       toolKeys: Object.keys(tools).toSorted(),
       workspaceInTools: 'workspace' in tools,
@@ -53,8 +54,10 @@ describe('workspace AI SDK tools', () => {
     await workspace.fs.writeFile('/outside.md', 'outside\n');
 
     const created = await createTools({
-      view: { hiddenRoots: ['/.private'], root: '/memory' },
-      workspace,
+      filesystem: createWorkspaceFileSystemView(workspace.fs, {
+        hiddenRoots: ['/.private'],
+        root: '/memory',
+      }),
     });
     const listing = await invoke(created.tools['bash'], {
       command: String.raw`find / -type f -name '*.md' | sort`,
@@ -69,12 +72,12 @@ describe('workspace AI SDK tools', () => {
       hiddenExit: resultField(hiddenRead, 'exitCode'),
       listing: resultField(listing, 'stdout'),
       patch,
-      returnedOriginalWorkspace: created.workspace === workspace,
+      returnedScopedFilesystem: created.filesystem !== workspace.fs,
     }).toStrictEqual({
       hiddenExit: 1,
       listing: '/visible.md\n',
       patch: { output: 'Path does not exist.', status: 'failed' },
-      returnedOriginalWorkspace: true,
+      returnedScopedFilesystem: true,
     });
     await expect(workspace.fs.readFile('/memory/.private/secret.md')).resolves.toBe('secret\n');
   });
@@ -82,7 +85,9 @@ describe('workspace AI SDK tools', () => {
   test('keeps the null device available inside a rooted tool view', async () => {
     const workspace = await createStorageWorkspace(new MemoryStorage());
     await workspace.fs.mkdir('/memory');
-    const { tools } = await createTools({ view: { root: '/memory' }, workspace });
+    const { tools } = await createTools({
+      filesystem: createWorkspaceFileSystemView(workspace.fs, { root: '/memory' }),
+    });
 
     await expect(
       invoke(tools['bash'], { command: "printf 'discarded' > /dev/null && printf ok" }),
@@ -95,7 +100,9 @@ describe('workspace AI SDK tools', () => {
     await workspace.fs.mkdir('/outside');
     await workspace.fs.writeFile('/outside/secret.md', 'secret\n');
     await workspace.fs.symlink('/outside', '/memory/escape');
-    const { tools } = await createTools({ view: { root: '/memory' }, workspace });
+    const { tools } = await createTools({
+      filesystem: createWorkspaceFileSystemView(workspace.fs, { root: '/memory' }),
+    });
 
     await expect(
       invoke(tools['bash'], { command: 'cat /escape/secret.md' }),
@@ -111,7 +118,9 @@ describe('workspace AI SDK tools', () => {
     await workspace.fs.mkdir('/memory');
     await workspace.fs.writeFile('/memory/one.md', 'one\n');
     await workspace.fs.writeFile('/memory/two.md', 'two\n');
-    const { tools } = await createTools({ view: { root: '/memory' }, workspace });
+    const { tools } = await createTools({
+      filesystem: createWorkspaceFileSystemView(workspace.fs, { root: '/memory' }),
+    });
 
     await expect(
       invoke(tools['bash'], {
@@ -138,7 +147,7 @@ describe('workspace AI SDK tools', () => {
     const workspace = await createStorageWorkspace(new MemoryStorage());
     await workspace.fs.writeFile('/pixel.png', pngBytes());
     await workspace.fs.symlink('/pixel.png', '/alias.png');
-    const { tools } = await createTools({ viewImage: { enabled: true }, workspace });
+    const { tools } = await createTools({ viewImage: { enabled: true }, filesystem: workspace.fs });
     await expect(invoke(tools['view_image'], { path: '/alias.png' })).rejects.toMatchObject({
       code: 'UNSUPPORTED_CONTENT',
     });
@@ -164,7 +173,7 @@ describe('workspace AI SDK tools', () => {
               : { allow: true },
         },
       },
-      workspace,
+      filesystem: workspace.fs,
     });
     await expect(invoke(tools['bash'], { command: 'rm /notes.md' })).resolves.toMatchObject({
       exitCode: 126,
@@ -183,7 +192,7 @@ describe('workspace AI SDK tools', () => {
     );
     const { tools } = await createTools({
       bash: { customCommands: [upper], policyOptions: { extraAllowCommands: ['upper'] } },
-      workspace,
+      filesystem: workspace.fs,
     });
 
     const result = await invoke(tools['bash'], {
@@ -197,7 +206,7 @@ describe('workspace AI SDK tools', () => {
   test('requires a positive Bash execution time limit', async () => {
     const workspace = await createStorageWorkspace(new MemoryStorage());
     await expect(
-      createTools({ bash: { limits: { maxExecutionTimeMs: 0 } }, workspace }),
+      createTools({ bash: { limits: { maxExecutionTimeMs: 0 } }, filesystem: workspace.fs }),
     ).rejects.toMatchObject({ code: 'QUOTA_EXCEEDED' });
   });
 
@@ -205,7 +214,7 @@ describe('workspace AI SDK tools', () => {
     const workspace = await createStorageWorkspace(new MemoryStorage());
     const { tools } = await createTools({
       bash: { limits: { maxExecutionTimeMs: 10 } },
-      workspace,
+      filesystem: workspace.fs,
     });
     const result = await invoke(tools['bash'], { command: 'sleep 1' });
     expect({
@@ -216,14 +225,20 @@ describe('workspace AI SDK tools', () => {
 
   test('bounds Bash output with a stable marker', async () => {
     const workspace = await createStorageWorkspace(new MemoryStorage());
-    const { tools } = await createTools({ bash: { limits: { maxBashOutput: 24 } }, workspace });
+    const { tools } = await createTools({
+      bash: { limits: { maxBashOutput: 24 } },
+      filesystem: workspace.fs,
+    });
     const result = await invoke(tools['bash'], { command: "printf 'abcdefghijklmnopqrstuvwxyz'" });
     expect(resultField(result, 'stdout')).toBe('abcdefghijk\n[truncated]\n');
   });
 
   test('accepts a command-length boundary and denies the next character', async () => {
     const workspace = await createStorageWorkspace(new MemoryStorage());
-    const { tools } = await createTools({ bash: { limits: { maxCommandLength: 7 } }, workspace });
+    const { tools } = await createTools({
+      bash: { limits: { maxCommandLength: 7 } },
+      filesystem: workspace.fs,
+    });
     await expect(invoke(tools['bash'], { command: 'echo hi' })).resolves.toMatchObject({
       exitCode: 0,
     });
@@ -236,7 +251,7 @@ describe('workspace AI SDK tools', () => {
   test('rejects invalid image limits before exposing the tool', async () => {
     const workspace = await createStorageWorkspace(new MemoryStorage());
     await expect(
-      createTools({ viewImage: { enabled: true, maxBytes: 0 }, workspace }),
+      createTools({ viewImage: { enabled: true, maxBytes: 0 }, filesystem: workspace.fs }),
     ).rejects.toMatchObject({ code: 'QUOTA_EXCEEDED' });
   });
 });

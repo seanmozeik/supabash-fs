@@ -1,7 +1,6 @@
 import type { ToolSet } from 'ai';
+import type { IFileSystem } from 'just-bash/browser';
 
-import type { Workspace } from '../api/contracts.js';
-import { createWorkspaceFileSystemView } from '../core/filesystem-view.js';
 import type { ApplyPatchOptions } from '../patch/operations.js';
 import { createApplyPatchTool } from './apply-patch-tool.js';
 import { createWorkspaceBashTool } from './bash.js';
@@ -11,34 +10,22 @@ export type WorkspaceToolSet = ToolSet;
 
 export interface WorkspaceTools {
   readonly tools: WorkspaceToolSet;
-  readonly workspace: Workspace;
+  readonly filesystem: IFileSystem;
 }
 
 export const createTools = async (options: CreateToolsOptions): Promise<WorkspaceTools> => {
-  const toolWorkspace =
-    options.view === undefined
-      ? options.workspace
-      : { fs: createWorkspaceFileSystemView(options.workspace.fs, options.view) };
+  const toolWorkspace = { fs: options.filesystem };
   const bash = await createWorkspaceBashTool(toolWorkspace, options.bash);
   const applyPatch =
     options.applyPatch === false
       ? undefined
       : createApplyPatchTool(toolWorkspace, applyPatchOptions(options.applyPatch));
-  if (options.viewImage?.enabled !== true) {
-    if (applyPatch === undefined) {
-      return { tools: { bash }, workspace: options.workspace };
-    }
-    return { tools: { apply_patch: applyPatch, bash }, workspace: options.workspace };
+  const tools: ToolSet = { bash, ...(applyPatch !== undefined && { apply_patch: applyPatch }) };
+  if (options.viewImage?.enabled === true) {
+    const { createViewImageTool } = await import('./view-image.js');
+    tools['view_image'] = createViewImageTool(toolWorkspace, options.viewImage.maxBytes);
   }
-  const { createViewImageTool } = await import('./view-image.js');
-  const viewImage = createViewImageTool(toolWorkspace, options.viewImage.maxBytes);
-  if (applyPatch === undefined) {
-    return { tools: { bash, view_image: viewImage }, workspace: options.workspace };
-  }
-  return {
-    tools: { apply_patch: applyPatch, bash, view_image: viewImage },
-    workspace: options.workspace,
-  };
+  return { tools, filesystem: options.filesystem };
 };
 
 const applyPatchOptions = (value: CreateToolsOptions['applyPatch']): ApplyPatchOptions =>

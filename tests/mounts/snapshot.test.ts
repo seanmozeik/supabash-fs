@@ -70,4 +70,13 @@ describe('shared text snapshots', () => {
     await expect(snapshot.fs.readFile('/help.md')).resolves.toBe('published v1');
     expect(snapshot.revision).toBe(receipt.revision);
   });
+
+  test('rejects a binary revision instead of silently replacing invalid UTF-8 bytes', async () => {
+    const publisher = await createStorageWorkspace(new MemoryStorage());
+    await publisher.fs.writeFile('/binary', new Uint8Array([0xff, 0xfe]));
+    const receipt = await publisher.commit();
+    await expect(
+      readWorkspaceSnapshot({ workspace: publisher, sourceId: 'docs', revision: receipt.revision }),
+    ).rejects.toMatchObject({ code: 'UNSUPPORTED_CONTENT' });
+  });
 });
