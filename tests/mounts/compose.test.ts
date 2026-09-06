@@ -140,4 +140,46 @@ describe('mounted filesystem', () => {
     await expect(workspace.fs.readFile('/topic/internal/secret.md')).resolves.toBe('hidden');
     await expect(workspace.fs.exists('/copy')).resolves.toBe(false);
   });
+
+  test('maps scoped sources and rejects moves between independent writable workspaces', async () => {
+    const first = await createStorageWorkspace(new MemoryStorage());
+    const second = await createStorageWorkspace(new MemoryStorage());
+    await first.fs.mkdir('/stored');
+    await first.fs.writeFile('/stored/note.md', 'private');
+    const mounted = createMountedFileSystem([
+      {
+        access: 'read-write',
+        sourceId: 'first',
+        workspace: first,
+        mountPoint: '/private/memories',
+        view: { root: '/stored', hiddenRoots: ['private', '/private'] },
+      },
+      { access: 'read-write', sourceId: 'second', workspace: second, mountPoint: '/other' },
+    ]);
+    expect({
+      source: mounted.toSourcePath('/private/memories/note.md'),
+      visible: mounted.toVirtualPath('/private/memories', '/stored/note.md'),
+      hidden: mounted.mounts[0]?.hiddenRoots,
+    }).toStrictEqual({
+      source: { mountPoint: '/private/memories', sourceId: 'first', path: '/stored/note.md' },
+      visible: '/private/memories/note.md',
+      hidden: ['/private'],
+    });
+    await expect(
+      mounted.fs.mv('/private/memories/note.md', '/other/note.md'),
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+    await expect(first.fs.readFile('/stored/note.md')).resolves.toBe('private');
+    await expect(second.fs.exists('/note.md')).resolves.toBe(false);
+    expect(() =>
+      createMountedFileSystem([
+        {
+          access: 'read-write',
+          sourceId: 'first',
+          workspace: first,
+          mountPoint: '/memory',
+          view: { hiddenRoots: ['/'] },
+        },
+      ]),
+    ).toThrow(/cannot hide/u);
+  });
 });

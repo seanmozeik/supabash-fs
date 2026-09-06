@@ -113,5 +113,7 @@ export interface RevisionEntry {
 export interface ReadonlyWorkspaceView {
   readonly entries: readonly RevisionEntry[];
   readonly readFile: (path: string) => Promise<string>;
+  /** Detached original bytes, including binary files in Storage revisions. */
+  readonly readFileBuffer: (path: string) => Promise<Uint8Array>;
   readonly revision: string;
 }

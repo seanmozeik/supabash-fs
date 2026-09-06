@@ -37,7 +37,14 @@ export const createMountedFileSystem = (mounts: readonly FileSystemMount[]): Mou
       );
     }
     const root = normalizeVirtualPath(mount.view?.root ?? '/');
-    const hiddenRoots = Object.freeze([...(mount.view?.hiddenRoots ?? [])]);
+    const hiddenRoots = Object.freeze(
+      [
+        ...new Set((mount.view?.hiddenRoots ?? []).map((path) => normalizeVirtualPath(path))),
+      ].toSorted(),
+    );
+    if (hiddenRoots.includes('/')) {
+      throw new SupabashError('INVALID_PATH', 'A mount cannot hide its entire root.');
+    }
     const descriptor: MountDescriptor = Object.freeze({
       hiddenRoots,
       mountPoint,
@@ -81,21 +88,27 @@ export const createMountedFileSystem = (mounts: readonly FileSystemMount[]): Mou
       return Object.freeze({
         mountPoint: descriptor.mountPoint,
         sourceId: descriptor.sourceId,
-        path: normalizeVirtualPath(`${descriptor.root}/${relative}`),
+        path:
+          relative === '/dev/null'
+            ? relative
+            : normalizeVirtualPath(`${descriptor.root}/${relative}`),
       });
     },
     toVirtualPath: (mountPoint: string, sourcePath: string) => {
       const { descriptor, fs } = required(mountPoint);
       if (
         mountPoint !== descriptor.mountPoint ||
-        !isSameOrDescendant(sourcePath, descriptor.root)
+        (normalizeVirtualPath(sourcePath) !== '/dev/null' &&
+          !isSameOrDescendant(sourcePath, descriptor.root))
       ) {
         throw new SupabashError('INVALID_PATH', 'Stored path is outside the selected mount.');
       }
       const path = normalizeVirtualPath(sourcePath);
       const relative = fs.resolvePath(
         '/',
-        descriptor.root === '/' ? path : path.slice(descriptor.root.length) || '/',
+        descriptor.root === '/' || path === '/dev/null'
+          ? path
+          : path.slice(descriptor.root.length) || '/',
       );
       return normalizeVirtualPath(`${mountPoint}/${relative}`);
     },

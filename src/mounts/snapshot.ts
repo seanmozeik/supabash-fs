@@ -8,7 +8,7 @@ import { normalizeVirtualPath, parentPaths } from '../core/path.js';
 
 export interface SnapshotFile {
   readonly path: string;
-  readonly content: string;
+  readonly content: string | Uint8Array;
 }
 
 export interface SnapshotLimits {
@@ -16,7 +16,7 @@ export interface SnapshotLimits {
   readonly maxBytes?: number;
 }
 
-/** A detached UTF-8 source. Its revision is supplied by the trusted publisher. */
+/** Detached source bytes. Its revision is supplied by the trusted publisher. */
 export interface FileSystemSnapshot {
   readonly fs: IFileSystem;
   readonly sourceId: string;
@@ -71,11 +71,13 @@ export const createFileSystemSnapshot = async (
         });
       }
       paths.add(normalized);
-      byteCount += new TextEncoder().encode(content).length;
+      const bytes =
+        typeof content === 'string' ? new TextEncoder().encode(content) : new Uint8Array(content);
+      byteCount += bytes.length;
       if (byteCount > maxBytes) {
         throw new SupabashError('QUOTA_EXCEEDED', 'Snapshot exceeds its byte limit.');
       }
-      return { content, path: normalized };
+      return { content: bytes, path: normalized };
     })
     .toSorted((left, right) => {
       if (left.path === right.path) {
@@ -86,9 +88,13 @@ export const createFileSystemSnapshot = async (
   if (files.some(({ path }) => parentPaths(path).some((parent) => paths.has(parent)))) {
     throw new SupabashError('INVALID_PATH', 'A snapshot file cannot also be a directory.');
   }
-  const fs = new InMemoryFs(Object.fromEntries(files.map(({ path, content }) => [path, content])));
+  const fs = new InMemoryFs(
+    Object.fromEntries(
+      files.map(({ path, content }) => [path, { content, mode: 0o444, mtime: new Date(0) }]),
+    ),
+  );
   const fingerprints = await Promise.all(
-    files.map(async ({ path, content }) => [path, await sha256(new TextEncoder().encode(content))]),
+    files.map(async ({ path, content }) => [path, await sha256(content)]),
   );
   const digest = await sha256(new TextEncoder().encode(JSON.stringify(fingerprints)));
   return Object.freeze({
@@ -101,7 +107,7 @@ export const createFileSystemSnapshot = async (
   });
 };
 
-/** Read an explicit immutable text revision; staged edits never enter this snapshot. */
+/** Read an explicit immutable revision; staged edits never enter this snapshot. */
 export const readWorkspaceSnapshot = async (options: {
   readonly workspace: Pick<Workspace, 'readRevision'>;
   readonly sourceId: string;
@@ -120,7 +126,7 @@ export const readWorkspaceSnapshot = async (options: {
   if (view.entries.some((entry) => entry.entryKind === 'symlink')) {
     throw new SupabashError(
       'UNSUPPORTED_CONTENT',
-      'Shared text snapshots do not contain symbolic links.',
+      'Shared snapshots do not contain symbolic links.',
     );
   }
   const entries = view.entries.filter((entry) => entry.entryKind === 'file');
@@ -130,15 +136,14 @@ export const readWorkspaceSnapshot = async (options: {
   const files: SnapshotFile[] = [];
   let byteCount = 0;
   for (const entry of entries) {
-    const content = await view.readFile(entry.path);
-    const bytes = new TextEncoder().encode(content);
+    const bytes = await view.readFileBuffer(entry.path);
     if (
       bytes.length !== entry.size ||
       (entry.contentHash !== undefined && (await sha256(bytes)) !== entry.contentHash)
     ) {
       throw new SupabashError(
-        'UNSUPPORTED_CONTENT',
-        'Revision file is not a lossless UTF-8 text projection.',
+        'HISTORY_CORRUPTION',
+        'Revision file does not match its recorded bytes.',
         { path: entry.path },
       );
     }
@@ -146,7 +151,7 @@ export const readWorkspaceSnapshot = async (options: {
     if (byteCount > maxBytes) {
       throw new SupabashError('QUOTA_EXCEEDED', 'Revision content exceeds snapshot limits.');
     }
-    files.push({ content, path: entry.path });
+    files.push({ content: bytes, path: entry.path });
   }
   return createFileSystemSnapshot({
     files,

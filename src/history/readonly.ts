@@ -17,6 +17,7 @@ export const readRevisionView = async (
   return {
     entries: record.entries,
     readFile: (path: string) => readRevisionFile(history, record.entries, path),
+    readFileBuffer: (path: string) => readRevisionFileBuffer(history, record.entries, path),
     revision,
   };
 };
@@ -26,6 +27,14 @@ const readRevisionFile = async (
   entries: readonly RevisionEntry[],
   path: string,
 ): Promise<string> => {
+  return new TextDecoder().decode(await readRevisionFileBuffer(history, entries, path));
+};
+
+const readRevisionFileBuffer = async (
+  history: HistoryBlobStore,
+  entries: readonly RevisionEntry[],
+  path: string,
+): Promise<Uint8Array> => {
   const normalized = normalizeVirtualPath(path);
   const entry = entries.find((candidate) => candidate.path === normalized);
   if (entry?.entryKind !== 'file' || entry.contentHash === undefined) {
@@ -39,5 +48,5 @@ const readRevisionFile = async (
       path: normalized,
     });
   }
-  return new TextDecoder().decode(body);
+  return new Uint8Array(body);
 };
