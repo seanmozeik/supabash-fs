@@ -1,5 +1,5 @@
 import type { WorkspaceBackendKind } from '../api/contracts.js';
-import { SupabashError } from '../api/errors.js';
+import { isSupabashError } from '../api/errors.js';
 import type {
   WorkspaceObservability,
   WorkspaceOperation,
@@ -30,7 +30,7 @@ export const startOperation = (
     details: EventDetails,
     error?: unknown,
   ): void => {
-    const errorCode = error instanceof SupabashError ? error.code : undefined;
+    const errorCode = isSupabashError(error) ? error.code : undefined;
     try {
       observability.onOperation({
         backend,

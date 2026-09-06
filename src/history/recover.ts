@@ -1,4 +1,4 @@
-import { SupabashError } from '../api/errors.js';
+import { isSupabashError, SupabashError } from '../api/errors.js';
 import type { RevisionEntry } from '../api/history.js';
 import { comparePaths } from '../core/entry-order.js';
 import { sha256 } from '../core/hash.js';
@@ -35,7 +35,7 @@ export const recoverWorkspace = async (storage: ScopedStorage): Promise<boolean>
     }
     return true;
   } catch (error) {
-    if (error instanceof SupabashError && error.code === 'PARTIAL_COMMIT') {
+    if (isSupabashError(error) && error.code === 'PARTIAL_COMMIT') {
       throw error;
     }
     throw new SupabashError('PARTIAL_COMMIT', 'Workspace recovery did not finish.', {

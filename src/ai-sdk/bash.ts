@@ -3,7 +3,7 @@ import { createBashTool, type CommandResult } from 'bash-tool';
 import { Bash } from 'just-bash/browser';
 
 import type { Workspace } from '../api/contracts.js';
-import { SupabashError } from '../api/errors.js';
+import { isSupabashError } from '../api/errors.js';
 import { createCommandPolicy } from '../policy/inspect.js';
 import { DEFAULT_MAX_COMMAND_LENGTH, type CommandInspectDecision } from '../policy/types.js';
 import { DEFAULT_MAX_BASH_OUTPUT, assertPositiveLimit, boundText } from './bounds.js';
@@ -72,7 +72,7 @@ export const createWorkspaceBashTool = async (
       try {
         result = await execute({ command }, extra);
       } catch (error) {
-        if (error instanceof SupabashError && error.code === 'POLICY_DENIED') {
+        if (isSupabashError(error) && error.code === 'POLICY_DENIED') {
           return denied(`Policy denied: ${error.message}`);
         }
         throw error;

@@ -879,6 +879,8 @@ All package errors are `SupabashError` values:
 
 `SupabashError.path` identifies the affected virtual path when one is
 available. The original error is available through `error.cause`.
+Use `isSupabashError(error)` to recognize these errors across separately bundled
+entry points, where JavaScript constructor identity can differ.
 
 `error.retryable` is true when Supabash has classified the cause as transient.
 `error.outcomeUnknown` is true when a transport failure may have hidden a

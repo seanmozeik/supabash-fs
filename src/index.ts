@@ -17,6 +17,7 @@ import {
 } from './api/document-codec.js';
 import {
   isRetryableSupabashError as retryableSupabashError,
+  isSupabashError as recognizeSupabashError,
   isUnknownOutcomeSupabashError as unknownOutcomeSupabashError,
 } from './api/errors.js';
 import { POSTGRES_WORKSPACE_CAPABILITIES as postgresWorkspaceCapabilities } from './api/postgres.js';
@@ -184,6 +185,7 @@ export const POSTGRES_INSTALL_SQL_URL = new URL(
 export const POSTGRES_REMOVE_SQL_URL = new URL('../sql/postgres/0001_remove.sql', import.meta.url);
 export const Supabash = openWorkspace;
 export const SupabashError = WorkspaceError;
+export const isSupabashError = recognizeSupabashError;
 export const isRetryableSupabashError = retryableSupabashError;
 export const isUnknownOutcomeSupabashError = unknownOutcomeSupabashError;
 export const applyDiff = applyV4ADiff;

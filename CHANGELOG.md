@@ -22,6 +22,9 @@ are replaced by this explicit filesystem input.
   are detached from their backing data.
 - Add `readFileBuffer` to `ReadonlyWorkspaceView` for lossless retained binary
   content. Custom implementations of that interface must supply the new method.
+- Recognize Supabash errors across bundled entry points with `isSupabashError`.
+  Mount denials return normal Bash and Apply Patch results when tools and mounts
+  come from separate package entry points.
 - Document shared-file publishing, upserts, deletion, rollback, read-only
   credentials, release selection, caching and table-backed sources in
   `docs/shared-filesystems.md`.
