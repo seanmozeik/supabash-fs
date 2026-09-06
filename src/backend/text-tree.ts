@@ -98,18 +98,8 @@ const loadSnapshotBody = (
   };
 };
 
-export const readonlyView = (
-  snapshot: PinnedSnapshot,
-  revision: string,
-): ReadonlyWorkspaceView => ({
-  entries: entriesFrom(snapshot).map((entry): RevisionEntry => ({
-    entryKind: 'file',
-    mode: entry.mode,
-    path: entry.path,
-    size: entry.size,
-    contentHash: requireHash(entry.contentHash, entry.path),
-  })),
-  readFile: (path) =>
+export const readonlyView = (snapshot: PinnedSnapshot, revision: string): ReadonlyWorkspaceView => {
+  const readFile = (path: string): Promise<string> =>
     Promise.resolve().then(() => {
       const normalized = normalizeVirtualPath(path);
       const document = snapshot.documents.find((candidate) => candidate.path === normalized);
@@ -119,9 +109,20 @@ export const readonlyView = (
         });
       }
       return document.content;
-    }),
-  revision,
-});
+    });
+  return {
+    entries: entriesFrom(snapshot).map((entry): RevisionEntry => ({
+      entryKind: 'file',
+      mode: entry.mode,
+      path: entry.path,
+      size: entry.size,
+      contentHash: requireHash(entry.contentHash, entry.path),
+    })),
+    readFile,
+    readFileBuffer: async (path) => new TextEncoder().encode(await readFile(path)),
+    revision,
+  };
+};
 
 export const decodeText = (body: Uint8Array, path: string): string => {
   let text: string;
