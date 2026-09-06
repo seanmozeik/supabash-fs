@@ -1,4 +1,4 @@
-import { Supabash } from '@seanmozeik/supabash-fs';
+import { createMountedFileSystem, readWorkspaceSnapshot, Supabash } from '@seanmozeik/supabash-fs';
 import { createTools } from '@seanmozeik/supabash-fs/ai-sdk';
 
 import { asRecord, formatError, parseJson } from '../live-context.ts';
@@ -25,7 +25,26 @@ runtime.serve(async (request) => {
       supabaseUrl,
       workspace: workspaceId,
     });
-    const { tools } = await createTools({ filesystem: openedWorkspace.fs });
+    const history = await openedWorkspace.history();
+    const revision = history.records.at(-1)?.revision;
+    if (revision === undefined) {
+      throw new Error('Smoke workspace has no retained revision.');
+    }
+    const snapshot = await readWorkspaceSnapshot({
+      workspace: openedWorkspace,
+      sourceId: 'edge-reference',
+      revision,
+    });
+    const mounted = createMountedFileSystem([
+      {
+        access: 'read-write',
+        mountPoint: '/memories',
+        sourceId: workspaceId,
+        workspace: openedWorkspace,
+      },
+      { access: 'read-only', mountPoint: '/docs', snapshot, view: { root: '/docs' } },
+    ]);
+    const { tools } = await createTools({ filesystem: mounted.fs });
     const { bash } = tools;
     if (bash?.execute === undefined) {
       throw new Error('Bash tool is unavailable.');
@@ -37,11 +56,19 @@ runtime.serve(async (request) => {
     if (!isToolResult(result) || result.exitCode !== 0) {
       throw new Error('Bash smoke command failed.');
     }
+    const denied: unknown = await bash.execute(
+      { command: 'echo forbidden > /docs/update.md' },
+      { context: {}, messages: [], toolCallId: crypto.randomUUID() },
+    );
+    if (!isToolResult(denied) || denied.exitCode === 0 || openedWorkspace.changes().length !== 0) {
+      throw new Error('Edge Runtime did not enforce the read-only mount.');
+    }
     return Response.json({
       backend: openedWorkspace.capabilities.backend,
       denoVersion: runtime.version.deno,
       matches: Math.trunc(Number(result.stdout.trim())),
       runtime: 'supabase-edge-runtime',
+      readonlyMountEnforced: true,
     });
   } catch (error) {
     return Response.json({ error: formatError(error) }, { status: 500 });

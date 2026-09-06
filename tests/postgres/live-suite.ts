@@ -1,6 +1,7 @@
 import { asRecord, assert, parseJson, type JsonRecord, type LiveContext } from './live-context.ts';
 import { proveCore } from './live-core.ts';
 import { proveHistoryAndRetention } from './live-history.ts';
+import { proveMountedPublishing } from './live-mounts.ts';
 import { proveSecurity } from './live-security.ts';
 
 export const runPostgresIntegration = async (
@@ -12,6 +13,7 @@ export const runPostgresIntegration = async (
   const core = await proveCore(context, firstUser);
   const history = await proveHistoryAndRetention(context, core);
   await proveSecurity(context, core, secondUser, history.checkpointId);
+  await proveMountedPublishing(context, firstUser, secondUser);
 
   const workspace = await context.open(firstUser.accessToken, core.workspaceId);
   await workspace.deleteCheckpoint(history.checkpointId);
@@ -34,7 +36,10 @@ export const runPostgresIntegration = async (
   const edge = asRecord(parseJson(JSON.parse(text)), 'Edge Runtime response');
   assert(edge['backend'] === 'postgres', 'Edge Runtime opened the wrong backend.');
   assert(Number(edge['matches']) > 0, 'Edge Runtime Bash did not find the marker.');
-  context.record('Supabase Edge Runtime package import and Bash projection');
+  assert(edge['readonlyMountEnforced'] === true, 'Edge Runtime did not enforce read-only mounts.');
+  context.record(
+    'Supabase Edge Runtime revision snapshot, mounted Bash, and read-only enforcement',
+  );
 
   return {
     assertionCount: context.assertions.length,
