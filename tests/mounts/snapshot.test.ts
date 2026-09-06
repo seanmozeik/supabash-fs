@@ -71,6 +71,32 @@ describe('shared snapshots', () => {
     ).rejects.toMatchObject({ code: 'QUOTA_EXCEEDED' });
   });
 
+  test('rejects mismatched retained revision content instead of publishing it under a trusted revision ID', async () => {
+    await expect(
+      readWorkspaceSnapshot({
+        sourceId: 'docs',
+        revision: 'v1',
+        workspace: {
+          readRevision: () =>
+            Promise.resolve({
+              revision: 'v1',
+              entries: [
+                {
+                  path: '/help.md',
+                  entryKind: 'file',
+                  mode: 0o444,
+                  size: 3,
+                  contentHash: '0'.repeat(64),
+                },
+              ],
+              readFile: () => Promise.resolve('bad'),
+              readFileBuffer: () => Promise.resolve(new TextEncoder().encode('bad')),
+            }),
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'HISTORY_CORRUPTION' });
+  });
+
   test('pins a committed revision across later edits, restore, and independent user work', async () => {
     const publisher = await createStorageWorkspace(new MemoryStorage());
     await publisher.fs.writeFile('/help.md', 'published v1');
