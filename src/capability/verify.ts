@@ -6,7 +6,7 @@ import {
   type DelegatedCapabilityClaims,
   type VerifyDelegatedCapabilityInput,
 } from '../api/capability.js';
-import { SupabashError } from '../api/errors.js';
+import { isSupabashError, SupabashError } from '../api/errors.js';
 import { assertClaimSchema, parseClaims } from './claims.js';
 import { jwsKeyId, peekCompactJwsHeader, verifyCompactJws } from './jws.js';
 
@@ -72,7 +72,7 @@ const guard = async <T>(work: () => Promise<T>): Promise<T> => {
   try {
     return await work();
   } catch (error) {
-    if (error instanceof SupabashError) {
+    if (isSupabashError(error)) {
       throw error;
     }
     throw new SupabashError('INVALID_CAPABILITY', 'Delegated capability could not be verified.', {

@@ -1,7 +1,7 @@
 import type { IFileSystem } from 'just-bash/browser';
 
 import type { Workspace } from '../api/contracts.js';
-import { SupabashError } from '../api/errors.js';
+import { isSupabashError, SupabashError } from '../api/errors.js';
 import { normalizeVirtualPath } from '../core/path.js';
 import { applyDiff } from './apply-diff.js';
 import {
@@ -227,6 +227,6 @@ const completedOutput = (operations: readonly ApplyPatchOperation[]): string => 
 };
 
 const asPatchError = (error: unknown): SupabashError =>
-  error instanceof SupabashError
+  isSupabashError(error)
     ? error
     : new SupabashError('INVALID_PATCH', 'Patch could not be applied.', { cause: error });

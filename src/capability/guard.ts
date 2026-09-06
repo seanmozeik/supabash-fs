@@ -1,7 +1,7 @@
 import type { DelegatedOperation } from '../api/capability.js';
 import type { CommitOptions } from '../api/commit.js';
 import type { CommitReceipt, Workspace, WorkspaceChange } from '../api/contracts.js';
-import { SupabashError } from '../api/errors.js';
+import { isSupabashError, SupabashError } from '../api/errors.js';
 import type {
   CheckpointOptions,
   CheckpointReceipt,
@@ -115,7 +115,7 @@ class GuardedWorkspace implements Workspace {
     try {
       this.assertOneOf(operation);
     } catch (error) {
-      if (!(error instanceof SupabashError)) {
+      if (!isSupabashError(error)) {
         throw error;
       }
       return Promise.reject(error);

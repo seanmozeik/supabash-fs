@@ -24,7 +24,10 @@ export interface SupabashErrorOptions {
   readonly retryable?: boolean;
 }
 
+const SUPABASH_ERROR = Symbol.for('@seanmozeik/supabash-fs/SupabashError');
+
 export class SupabashError extends Error {
+  readonly [SUPABASH_ERROR] = true;
   readonly code: SupabashErrorCode;
   readonly outcomeUnknown: boolean;
   readonly path?: string;
@@ -42,8 +45,15 @@ export class SupabashError extends Error {
   }
 }
 
+/** Recognize errors across independently bundled package entry points. */
+export const isSupabashError = (error: unknown): error is SupabashError =>
+  typeof error === 'object' &&
+  error !== null &&
+  SUPABASH_ERROR in error &&
+  error[SUPABASH_ERROR] === true;
+
 export const isRetryableSupabashError = (error: unknown): error is SupabashError =>
-  error instanceof SupabashError && error.retryable;
+  isSupabashError(error) && error.retryable;
 
 export const isUnknownOutcomeSupabashError = (error: unknown): error is SupabashError =>
-  error instanceof SupabashError && error.outcomeUnknown;
+  isSupabashError(error) && error.outcomeUnknown;

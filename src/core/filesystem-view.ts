@@ -1,6 +1,6 @@
 import type { IFileSystem } from 'just-bash/browser';
 
-import { SupabashError } from '../api/errors.js';
+import { isSupabashError, SupabashError } from '../api/errors.js';
 import { parentVirtualPath } from './path.js';
 
 const NULL_DEVICE = '/dev/null';
@@ -99,7 +99,7 @@ export const createWorkspaceFileSystemView = (
       try {
         return await inner.exists(await checkedForAccess(path));
       } catch (error) {
-        if (error instanceof SupabashError && error.code === 'POLICY_DENIED') {
+        if (isSupabashError(error) && error.code === 'POLICY_DENIED') {
           return false;
         }
         throw error;

@@ -1,6 +1,6 @@
 import type { CommitContext } from '../api/commit.js';
 import type { WorkspaceChange, WorkspaceEntryKind } from '../api/contracts.js';
-import { SupabashError } from '../api/errors.js';
+import { isSupabashError, SupabashError } from '../api/errors.js';
 import type { RevisionEntry } from '../api/history.js';
 import { contentTypeForPath } from './content-type.js';
 import { comparePaths } from './entry-order.js';
@@ -154,7 +154,7 @@ export const partialCommitError = (error: unknown): SupabashError =>
   });
 
 export const asSupabashError = (error: unknown): SupabashError =>
-  error instanceof SupabashError
+  isSupabashError(error)
     ? error
     : new SupabashError('STORAGE', 'Workspace storage operation failed.', { cause: error });
 
