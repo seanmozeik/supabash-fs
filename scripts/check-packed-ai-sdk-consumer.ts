@@ -67,13 +67,20 @@ if (!Object.hasOwn(Supabash, 'open')) throw new Error('Missing Supabash.open.');
     Bun.write(
       path.join(consumerDirectory, 'typecheck.ts'),
       `import { createTools, type CreateToolsOptions, type WorkspaceTools } from '@seanmozeik/supabash-fs/ai-sdk';
-import type { Workspace } from '@seanmozeik/supabash-fs';
+import { createMountedFileSystem, createFileSystemSnapshot, readWorkspaceSnapshot, type Workspace } from '@seanmozeik/supabash-fs';
 declare const workspace: Workspace;
 const options: CreateToolsOptions = {
-
   filesystem: workspace.fs,
 };
 const tools: Promise<WorkspaceTools> = createTools(options);
+const shared = await createFileSystemSnapshot({ sourceId: 'docs', revision: 'v1', files: [{ path: '/help.md', content: 'help' }] });
+const mounted = createMountedFileSystem([
+  { access: 'read-write', sourceId: 'user', mountPoint: '/memories', workspace },
+  { access: 'read-only', mountPoint: '/docs', snapshot: shared },
+]);
+const mountedTools: Promise<WorkspaceTools> = createTools({ filesystem: mounted.fs });
+void mountedTools;
+void readWorkspaceSnapshot({ workspace, sourceId: 'docs', revision: 'v1' });
 void tools;
 `,
     ),

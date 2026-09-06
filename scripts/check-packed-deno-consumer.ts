@@ -62,7 +62,7 @@ try {
     ),
     Bun.write(
       path.join(consumerDirectory, 'smoke.ts'),
-      `import { isRetryableSupabashError, isUnknownOutcomeSupabashError, POSTGRES_INSTALL_SQL_URL, Supabash, SupabashError } from '@seanmozeik/supabash-fs';
+      `import { createFileSystemSnapshot, createMountedFileSystem, isRetryableSupabashError, isUnknownOutcomeSupabashError, POSTGRES_INSTALL_SQL_URL, Supabash, SupabashError } from '@seanmozeik/supabash-fs';
 import { createTools, type WorkspaceTools } from '@seanmozeik/supabash-fs/ai-sdk';
 import { InMemoryFs } from 'just-bash/browser';
 if (!Object.hasOwn(Supabash, 'open')) throw new Error('Missing Supabash.open.');
@@ -75,8 +75,13 @@ if (!isUnknownOutcomeSupabashError(retryable)) throw new Error('Missing outcome 
 const installSql = await Deno.readTextFile(POSTGRES_INSTALL_SQL_URL);
 if (!installSql.includes('create schema supabash')) throw new Error('Missing Postgres install SQL.');
 const result: Promise<WorkspaceTools> | undefined = undefined;
-const workspace = { fs: new InMemoryFs() } as unknown as import('@seanmozeik/supabash-fs').Workspace;
-const bound = await createTools({ filesystem: workspace.fs, viewImage: { enabled: true } });
+const snapshot = await createFileSystemSnapshot({ sourceId: 'docs', revision: 'v1', files: [{ path: '/help.md', content: 'help' }] });
+const mounted = createMountedFileSystem([
+  { access: 'read-write', sourceId: 'user', mountPoint: '/memories', workspace: { fs: new InMemoryFs() } },
+  { access: 'read-only', mountPoint: '/docs', snapshot },
+]);
+const bound = await createTools({ filesystem: mounted.fs, viewImage: { enabled: true } });
+if (await mounted.fs.readFile('/docs/help.md') !== 'help') throw new Error('Mounted snapshot read failed.');
 if (!Object.hasOwn(bound.tools, 'view_image')) throw new Error('Missing view_image.');
 void result;
 `,

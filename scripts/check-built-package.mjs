@@ -5,6 +5,9 @@ import {
   isUnknownOutcomeSupabashError,
   Supabash,
   SupabashError,
+  createFileSystemSnapshot,
+  createMountedFileSystem,
+  readWorkspaceSnapshot,
 } from '../dist/index.js';
 
 if (
@@ -17,6 +20,21 @@ if (
 
 if (new SupabashError('STORAGE', 'Package smoke check').code !== 'STORAGE') {
   throw new TypeError('The built package does not export SupabashError.');
+}
+if (typeof readWorkspaceSnapshot !== 'function') {
+  throw new TypeError('The built package does not export revision snapshots.');
+}
+const snapshot = await createFileSystemSnapshot({
+  sourceId: 'docs',
+  revision: 'v1',
+  files: [{ path: '/help.md', content: 'published' }],
+});
+const mounted = createMountedFileSystem([{ access: 'read-only', mountPoint: '/docs', snapshot }]);
+if (
+  (await mounted.fs.readFile('/docs/help.md')) !== 'published' ||
+  mounted.toSourcePath('/docs/help.md').path !== '/help.md'
+) {
+  throw new TypeError('The built package failed mounted snapshot reads.');
 }
 const retryable = new SupabashError('STORAGE', 'Package smoke check', {
   outcomeUnknown: true,
