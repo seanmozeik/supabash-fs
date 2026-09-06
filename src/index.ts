@@ -38,6 +38,11 @@ import {
   DEFAULT_MAX_TRANSACTION_METADATA_BYTES as defaultMaxTransactionMetadataBytes,
   DEFAULT_MAX_VISIBLE_FILES as defaultMaxVisibleFiles,
 } from './history/limits.js';
+import { createMountedFileSystem as mountFileSystems } from './mounts/compose.js';
+import {
+  createFileSystemSnapshot as snapshotFiles,
+  readWorkspaceSnapshot as snapshotRevision,
+} from './mounts/snapshot.js';
 import { applyDiff as applyV4ADiff } from './patch/apply-diff.js';
 import {
   applyPatch as applyWorkspacePatch,
@@ -125,6 +130,19 @@ export type {
 export type { JsonValue } from './api/json.js';
 export type { WorkspaceLimits } from './history/limits.js';
 export type { WorkspaceFileSystemViewOptions } from './core/filesystem-view.js';
+export type {
+  FileSystemMount,
+  WritableWorkspaceMount,
+  ReadonlySnapshotMount,
+  MountedFileSystem,
+  MountDescriptor,
+} from './mounts/contracts.js';
+export type {
+  FileSystemSnapshot,
+  SnapshotFile,
+  SnapshotLimits,
+  CreateFileSystemSnapshotOptions,
+} from './mounts/snapshot.js';
 export type { SupabashOptions } from './api/options.js';
 export type { ApplyDiffMode } from './patch/apply-diff.js';
 export type {
@@ -173,6 +191,9 @@ export const applyPatch = applyWorkspacePatch;
 export const applyPatchOperations = applyWorkspacePatchOperations;
 export const createCommandPolicy = createWorkspaceCommandPolicy;
 export const createWorkspaceFileSystemView = createFileSystemView;
+export const createMountedFileSystem = mountFileSystems;
+export const createFileSystemSnapshot = snapshotFiles;
+export const readWorkspaceSnapshot = snapshotRevision;
 export const createDelegatedCapability = signDelegatedCapability;
 export const createPostgresDelegatedCapability = signPostgresDelegatedCapability;
 export const importCapabilitySecret = loadCapabilitySecret;

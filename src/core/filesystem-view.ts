@@ -75,12 +75,26 @@ export const createWorkspaceFileSystemView = (
     assertVisibleActualPath(toInnerPath(inner, root, resolved));
     return resolved;
   };
+  const checkedTree = async (path: string): Promise<string> => {
+    const actual = await checkedForAccess(path);
+    for (const candidate of inner.getAllPaths()) {
+      if (inside(candidate, actual)) {
+        assertVisibleActualPath(candidate);
+        assertVisibleActualPath(await inner.realpath(candidate));
+      }
+    }
+    // Protect hidden roots even when they have no materialized files yet.
+    if (hiddenRoots.some((hidden) => inside(hidden, actual))) {
+      throw denied(path);
+    }
+    return actual;
+  };
   const fs: IFileSystem = {
     appendFile: async (path, content, writeOptions) =>
       inner.appendFile(await checkedForAccess(path), content, writeOptions),
     chmod: async (path, mode) => inner.chmod(await checkedForAccess(path), mode),
     cp: async (source, destination, copyOptions) =>
-      inner.cp(await checkedForAccess(source), await checkedForAccess(destination), copyOptions),
+      inner.cp(await checkedTree(source), await checkedTree(destination), copyOptions),
     exists: async (path) => {
       try {
         return await inner.exists(await checkedForAccess(path));
@@ -101,7 +115,7 @@ export const createWorkspaceFileSystemView = (
     lstat: async (path) => inner.lstat(await checkedForAccess(path)),
     mkdir: async (path, mkdirOptions) => inner.mkdir(await checkedForAccess(path), mkdirOptions),
     mv: async (source, destination) =>
-      inner.mv(await checkedForAccess(source), await checkedForAccess(destination)),
+      inner.mv(await checkedTree(source), await checkedTree(destination)),
     readFile: async (path, readOptions) =>
       inner.readFile(await checkedForAccess(path), readOptions),
     readFileBuffer: async (path) => inner.readFileBuffer(await checkedForAccess(path)),
@@ -113,7 +127,7 @@ export const createWorkspaceFileSystemView = (
     readlink: denyLinks,
     realpath: async (path) => mapFromInner(await inner.realpath(await checkedForAccess(path))),
     resolvePath,
-    rm: async (path, removeOptions) => inner.rm(await checkedForAccess(path), removeOptions),
+    rm: async (path, removeOptions) => inner.rm(await checkedTree(path), removeOptions),
     stat: async (path) => inner.stat(await checkedForAccess(path)),
     symlink: denyLinks,
     utimes: async (path, atime, mtime) => inner.utimes(await checkedForAccess(path), atime, mtime),
