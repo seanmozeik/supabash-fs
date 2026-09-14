@@ -151,8 +151,12 @@ class GuardedPostgresWorkspace extends GuardedWorkspace implements DelegatedPost
     this.postgres = inner;
   }
 
-  committedSnapshot(): PostgresWorkspaceSnapshot {
+  committedSnapshot(): Promise<PostgresWorkspaceSnapshot> {
     return this.postgres.committedSnapshot();
+  }
+
+  committedRevision(): string | null {
+    return this.postgres.committedRevision();
   }
 }
 

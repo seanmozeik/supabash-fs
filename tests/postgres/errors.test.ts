@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js';
 import { describe, expect, test, vi } from 'vitest';
 
 import {
@@ -13,6 +14,95 @@ import { callPostgresRpc, postgresError, type PostgresRpcClient } from '../../sr
 const workspace = '123e4567-e89b-42d3-a456-426614174000';
 
 describe('postgres errors', () => {
+  test('keeps an unverifiable mutation outcome unknown without automatic retry advice', async () => {
+    const client = { rpc: () => Promise.resolve({ data: {}, error: null }) };
+    const cause = new Error('invalid receipt');
+    const decode = (): never => {
+      throw cause;
+    };
+    await expect(
+      callPostgresRpc(
+        client,
+        'supabash_commit',
+        decode,
+        {},
+        { outcomeUnknownOnTransportFailure: true },
+      ),
+    ).rejects.toMatchObject({ code: 'STORAGE', cause, outcomeUnknown: true, retryable: false });
+    await expect(callPostgresRpc(client, 'supabash_load_manifest', decode)).rejects.toBe(cause);
+  });
+
+  test.each(['PGRST000', 'PGRST001', 'PGRST002', 'PGRST003'])(
+    'retries connection rejection %s without an unknown outcome',
+    async (code) => {
+      const client = {
+        rpc: () =>
+          Promise.resolve({
+            data: null,
+            error: { code, message: 'connection unavailable' },
+            status: 504,
+          }),
+      };
+      await expect(
+        callPostgresRpc(
+          client,
+          'supabash_commit',
+          (value) => value,
+          {},
+          { outcomeUnknownOnTransportFailure: true },
+        ),
+      ).rejects.toMatchObject({ code: 'STORAGE', retryable: true, outcomeUnknown: false });
+    },
+  );
+
+  test('preserves unknown commit outcome with the actual Supabase fetch-error adapter', async () => {
+    const cause = new TypeError('connection lost');
+    const fetchFailure = (): Promise<Response> => Promise.reject(cause);
+    const client = createClient('https://example.supabase.co', 'test-key', {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      global: { fetch: Object.assign(fetchFailure, { preconnect: fetch.preconnect }) },
+    });
+    await expect(
+      callPostgresRpc(
+        client,
+        'supabash_commit',
+        (value) => value,
+        {},
+        { outcomeUnknownOnTransportFailure: true },
+      ),
+    ).rejects.toMatchObject({ code: 'STORAGE', outcomeUnknown: true, retryable: true });
+  });
+
+  test.each([0, 502, 503, 504])(
+    'treats unstructured transport status %s as unknown for commits',
+    async (status) => {
+      const client = {
+        rpc: () =>
+          Promise.resolve({ data: null, error: { message: 'unavailable', code: '' }, status }),
+      };
+      await expect(
+        callPostgresRpc(
+          client,
+          'supabash_commit',
+          (value) => value,
+          {},
+          { outcomeUnknownOnTransportFailure: true },
+        ),
+      ).rejects.toMatchObject({ code: 'STORAGE', outcomeUnknown: true, retryable: true });
+      await expect(
+        callPostgresRpc(client, 'supabash_load_manifest', (value) => value),
+      ).rejects.toMatchObject({ code: 'STORAGE', outcomeUnknown: false, retryable: true });
+    },
+  );
+
+  test.each(['55P03', '40P01', '40001'])('retries a rolled-back transaction for %s', (code) => {
+    expect(postgresError({ code, message: 'transaction aborted' })).toMatchObject({
+      code: 'COMMIT_COORDINATION',
+      retryable: true,
+      outcomeUnknown: false,
+    });
+  });
+
   test('maps only the stable 409 conflict contract to COMMIT_CONFLICT', () => {
     expect(postgresError({ code: 'PT409', message: 'SUPABASH_COMMIT_CONFLICT' })).toMatchObject({
       code: 'COMMIT_CONFLICT',

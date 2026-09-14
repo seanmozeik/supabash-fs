@@ -53,10 +53,10 @@ describe('public Postgres workspace API', () => {
       exchange: api.calls[0]?.body,
       load: api.calls[1]?.body,
       delegation: opened.delegation,
-      snapshot: opened.committedSnapshot(),
+      snapshot: await opened.committedSnapshot(),
     }).toStrictEqual({
       backend: 'postgres',
-      calls: ['/rest/v1/rpc/supabash_exchange_capability', '/rest/v1/rpc/supabash_load_workspace'],
+      calls: ['/rest/v1/rpc/supabash_exchange_capability', '/rest/v1/rpc/supabash_load_manifest'],
       exchange: { p_capability: capability },
       load: { p_delegated_grant: 'opaque-grant', p_workspace_id: workspace },
       delegation: {
@@ -214,7 +214,7 @@ class FakePostgresApi {
           workspace: this.claims.workspace,
         });
       }
-      if (path.endsWith('/supabash_load_workspace')) {
+      if (path.endsWith('/supabash_load_manifest')) {
         if (this.failLoad) {
           return json({ message: 'Injected snapshot failure.' }, 500);
         }

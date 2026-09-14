@@ -1,4 +1,3 @@
-import type { CommitReceipt } from '../api/contracts.js';
 import { renderStoredDocument, type TextDocumentCodec } from '../api/document-codec.js';
 import { SupabashError } from '../api/errors.js';
 import type { ReadonlyWorkspaceView, RevisionEntry } from '../api/history.js';
@@ -8,6 +7,7 @@ import type { RemoteEntry } from '../core/storage.js';
 import { TrackedFileSystem } from '../core/tracked-file-system.js';
 import { prepareUpload } from '../core/workspace-changes.js';
 import type { BackendDocument, PinnedSnapshot } from './contracts.js';
+import { loadDocument } from './document-loader.js';
 
 export const TEXT_FILE_MODE = 0o644;
 const textEncoder = new TextEncoder();
@@ -16,7 +16,6 @@ const textDecoder = new TextDecoder('utf-8', { fatal: true });
 export const snapshotFromFileSystem = async (
   fs: TrackedFileSystem,
   documentCodec: TextDocumentCodec,
-  receipt?: CommitReceipt,
 ): Promise<PinnedSnapshot> => {
   const documents = [];
   for (const path of fs.getAllPaths().toSorted()) {
@@ -25,14 +24,7 @@ export const snapshotFromFileSystem = async (
       documents.push(await documentFromContent(path, content, documentCodec));
     }
   }
-  return {
-    documents,
-    revision: receipt?.revision ?? null,
-    ...(receipt !== undefined && {
-      committedAt: receipt.committedAt,
-      transactionId: receipt.transactionId,
-    }),
-  };
+  return { documents, revision: null };
 };
 
 export interface TextTreeProjection {
@@ -44,19 +36,16 @@ export const projectSnapshot = async (
   snapshot: PinnedSnapshot,
   maxFileSystemBytes?: number,
 ): Promise<TextTreeProjection> => {
-  const bodies = snapshotBodyMap(snapshot);
+  let current = bodyLoader(snapshot);
   const filesystem = await TrackedFileSystem.create(
     entriesFrom(snapshot),
-    loadSnapshotBody(bodies),
+    (entry) => current(entry),
     maxFileSystemBytes,
   );
   return {
     filesystem,
     replaceSnapshotBodies(next) {
-      bodies.clear();
-      for (const [path, body] of snapshotBodyMap(next)) {
-        bodies.set(path, body);
-      }
+      current = bodyLoader(next);
     },
   };
 };
@@ -77,30 +66,22 @@ export const entriesFrom = (snapshot: PinnedSnapshot): readonly RemoteEntry[] =>
 export const bodyLoader = (
   snapshot: PinnedSnapshot,
 ): ((entry: RemoteEntry) => Promise<Uint8Array>) => {
-  const bodies = snapshotBodyMap(snapshot);
-  return loadSnapshotBody(bodies);
-};
-
-const snapshotBodyMap = (snapshot: PinnedSnapshot): Map<string, Uint8Array> =>
-  new Map(snapshot.documents.map(({ content, path }) => [path, textEncoder.encode(content)]));
-
-const loadSnapshotBody = (
-  bodies: ReadonlyMap<string, Uint8Array>,
-): ((entry: RemoteEntry) => Promise<Uint8Array>) => {
-  return (entry: RemoteEntry): Promise<Uint8Array> => {
-    const body = bodies.get(entry.path);
-    if (body === undefined) {
+  const entries = new Map(snapshot.documents.map((entry) => [entry.path, entry]));
+  return async (remote) => {
+    const entry = entries.get(remote.path);
+    if (entry === undefined) {
       throw new SupabashError('HISTORY_CORRUPTION', 'Snapshot body is missing.', {
-        path: entry.path,
+        path: remote.path,
       });
     }
-    return Promise.resolve(body);
+    const document = await loadDocument(snapshot, entry);
+    return textEncoder.encode(document.content);
   };
 };
 
 export const readonlyView = (snapshot: PinnedSnapshot, revision: string): ReadonlyWorkspaceView => {
   const readFile = (path: string): Promise<string> =>
-    Promise.resolve().then(() => {
+    Promise.resolve().then(async () => {
       const normalized = normalizeVirtualPath(path);
       const document = snapshot.documents.find((candidate) => candidate.path === normalized);
       if (document === undefined) {
@@ -108,7 +89,8 @@ export const readonlyView = (snapshot: PinnedSnapshot, revision: string): Readon
           path: normalized,
         });
       }
-      return document.content;
+      const loaded = await loadDocument(snapshot, document);
+      return loaded.content;
     });
   return {
     entries: entriesFrom(snapshot).map((entry): RevisionEntry => ({

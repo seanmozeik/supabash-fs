@@ -200,7 +200,8 @@ const proveManifestGrowth = async (context: LiveContext, accessToken: string): P
   );
   assert(stats['currentDocumentCount'] === 8, 'Growth fixture lost current documents.');
   assert(stats['revisionCount'] === 6, 'Growth fixture has the wrong revision count.');
-  assert(stats['manifestEntryCount'] === 48, 'Revisions do not contain complete manifests.');
+  assert(stats['manifestEntryCount'] === 0, 'New revisions copied complete manifests.');
+  assert(stats['versionEntryCount'] === 13, 'Unchanged entries were copied between revisions.');
   assert(stats['bodyCount'] === 13, 'Content-addressed body growth is incorrect.');
-  context.record('complete-manifest and content-addressed storage growth');
+  context.record('changed-entry and content-addressed storage growth');
 };

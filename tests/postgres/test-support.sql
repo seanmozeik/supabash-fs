@@ -71,6 +71,9 @@ as $function$
     'manifestEntryCount', (
       select count(*) from supabash.revision_entries where workspace_id = p_workspace_id
     ),
+    'versionEntryCount', (
+      select count(*) from supabash.document_versions where workspace_id = p_workspace_id
+    ),
     'revisionCount', (
       select count(*) from supabash.workspace_revisions where workspace_id = p_workspace_id
     )

@@ -152,7 +152,9 @@ Run the versioned install asset as the Supabase database owner:
 
 ```sh
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f node_modules/@seanmozeik/supabash-fs/sql/postgres/0001_install.sql
+  -f node_modules/@seanmozeik/supabash-fs/sql/postgres/0001_install.sql \
+  -f node_modules/@seanmozeik/supabash-fs/sql/postgres/0002_lazy_reads.sql \
+  -f node_modules/@seanmozeik/supabash-fs/sql/postgres/0003_versioned_entries.sql
 ```
 
 The package exports the same file as
@@ -518,11 +520,22 @@ with a database lock, queue, Durable Object, or another system.
 
 ## Postgres consistency
 
-The Postgres backend loads the current head and its complete immutable manifest
-through one pinned snapshot RPC. Its commit RPC takes a transaction-scoped
+The Postgres backend loads the current head and its immutable manifest without
+file bodies. File reads fetch individual bodies at that pinned revision. Repeated
+filesystem reads share the downloaded body. A commit rebuilds its snapshot from
+accepted changes without reading unchanged files.
+
+Apply `sql/postgres/0002_lazy_reads.sql` and then `0003_versioned_entries.sql`
+once after the foundation installation, before upgrading clients to 0.7.0.
+Their exports are `@seanmozeik/supabash-fs/postgres/lazy-reads.sql` and
+`@seanmozeik/supabash-fs/postgres/versioned-entries.sql`.
+`await workspace.committedSnapshot()` explicitly loads a complete detached
+snapshot in one bulk request; `workspace.committedRevision()` reads only the revision.
+
+Its commit RPC takes a transaction-scoped
 advisory lock, checks the expected head, validates the complete change set, and
 writes current documents, workspace-local content-addressed bodies, revision
-metadata, the complete revision manifest, receipt changes, and the new head in
+metadata, changed file versions, receipt changes, and the new head in
 one transaction.
 
 A stale head returns HTTP 409 with `SUPABASH_COMMIT_CONFLICT`, which the client
@@ -530,10 +543,23 @@ maps to `COMMIT_CONFLICT`. Expected conflicts do not use retry-class SQLSTATE
 `40001`. Any other error rolls back the full transaction. Restore stages a
 target revision and the next commit creates a new forward revision.
 
-Version 0.3.0 writes a complete manifest for every revision. This makes pinned
-loads and historical reads direct, but each commit writes one manifest row per
-document. The internal backend contract can support periodic manifests and
-deltas in a later release without changing `Workspace`.
+Commit, checkpoint, and purge have a one-second lock-wait limit. Lock timeout,
+deadlock, and serialization failure map to retryable `COMMIT_COORDINATION`.
+Callers must bound retries and add backoff. A stale revision requires reopening
+and reconsidering the changes. A delegated read of an older pinned revision
+requires `history` as well as `read`. Expired grants and purged revisions fail
+explicitly.
+
+Version 0.7.0 stores unchanged file entries once across successive revisions.
+Sequence intervals select the correct file version without replaying changes.
+Purge removes a closed interval only when no retained revision needs it.
+Distinct upsert batches of at least 16 files use set-based database writes.
+Mixed mutations keep their ordered semantics. Both paths validate receipts and
+roll back the whole transaction on failure.
+Existing revisions keep their original manifests. The upgrade seeds entries
+from current documents under a database lock; schedule it as a database migration.
+Opening a workspace still transfers its full path index. Large workspaces and
+aggregate traffic therefore need measured database and application capacity.
 
 ## Operation events
 
@@ -892,6 +918,20 @@ unknown, repeat an operation only when it is idempotent or after reconciliation.
 For a Postgres commit, the workspace retains the same transaction and generated
 context across an immediate retry, so the database can return the existing
 result without creating a second logical commit.
+
+Session-verification transport and server failures also return retryable
+`STORAGE` errors. Invalid sessions return non-retryable `AUTHENTICATION` errors.
+Keep retries bounded, use backoff with jitter, and count retries against the
+host's request admission limit. An unknown mutation outcome still requires
+idempotency or reconciliation, even when its error is retryable.
+
+Set a limit on active workspace operations at the application boundary. Count
+work across all application workers that share the database; a separate large
+queue in each worker can overload the same connection pool. Reject or defer
+excess arrivals with a bounded queue and deadline. Increasing concurrency past
+capacity can reduce throughput and increase failures. Use the
+[Modal capacity harness](scripts/stress/hill/README.md) to find a limit for the
+deployment's actual workload, file sizes, and latency target.
 
 ## Runtime and package size
 

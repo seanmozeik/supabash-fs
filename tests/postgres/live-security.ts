@@ -57,6 +57,7 @@ const proveIsolation = async (
     'capability_verifiers',
     'checkpoints',
     'current_documents',
+    'document_versions',
     'delegated_grants',
     'revision_changes',
     'revision_entries',

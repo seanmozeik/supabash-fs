@@ -1,4 +1,8 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import {
+  createClient,
+  isAuthRetryableFetchError,
+  type SupabaseClient,
+} from '@supabase/supabase-js';
 
 import { SupabashError } from '../api/errors.js';
 import { jwtRole } from './jwt.js';
@@ -33,6 +37,13 @@ export const authenticate = async (
   });
   const { data, error } = await client.auth.getUser(accessToken);
   if (error !== null) {
+    if (isAuthRetryableFetchError(error)) {
+      throw new SupabashError(
+        'STORAGE',
+        'Supabase session verification is temporarily unavailable.',
+        { cause: error, retryable: true },
+      );
+    }
     throw new SupabashError('AUTHENTICATION', 'Supabase did not verify the user session.', {
       cause: error,
     });

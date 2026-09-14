@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { describe, expect, test, vi } from 'vitest';
 
 import { createYamlFrontmatterCodec } from '../../src/api/document-codec.ts';
@@ -74,9 +76,9 @@ describe('postgres backend', () => {
             {
               body,
               bodyByteSize: new TextEncoder().encode(body).byteLength,
-              bodyHash: 'a'.repeat(64),
+              bodyHash: createHash('sha256').update(body).digest('hex'),
               byteSize: new TextEncoder().encode(content).byteLength,
-              contentHash: 'b'.repeat(64),
+              contentHash: createHash('sha256').update(content).digest('hex'),
               metadata: { description: 'How demanding work affects recovery' },
               path: '/pacing.md',
             },
@@ -243,7 +245,7 @@ describe('postgres backend', () => {
       p_changes: [{ from: '/source.md', kind: 'move', path: '/destination.md' }],
       p_receipt_changes: [
         {
-          beforeHash: 'b'.repeat(64),
+          beforeHash: createHash('sha256').update('source\n').digest('hex'),
           kind: 'move',
           moveFrom: '/source.md',
           moveTo: '/destination.md',
@@ -279,7 +281,11 @@ const snapshot = () => ({
 const overwriteSnapshot = () => ({
   ...snapshot(),
   documents: [
-    storedDocument('/destination.md', 'destination\n', 'c'.repeat(64)),
-    storedDocument('/source.md', 'source\n', 'b'.repeat(64)),
+    storedDocument(
+      '/destination.md',
+      'destination\n',
+      createHash('sha256').update('destination\n').digest('hex'),
+    ),
+    storedDocument('/source.md', 'source\n', createHash('sha256').update('source\n').digest('hex')),
   ],
 });

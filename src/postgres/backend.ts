@@ -30,6 +30,8 @@ import {
   decodeHistoryPage,
   decodePurge,
   decodeSnapshot,
+  decodeManifest,
+  decodeDocument,
 } from './decode.js';
 import { callPostgresRpc, type PostgresRpcClient } from './rpc.js';
 
@@ -41,11 +43,12 @@ const RPC = Object.freeze({
   diff: 'supabash_diff',
   history: 'supabash_history',
   loadRevision: 'supabash_load_revision',
-  loadWorkspace: 'supabash_load_workspace',
+  loadWorkspace: 'supabash_load_manifest',
   purge: 'supabash_purge',
 });
 
 export interface PostgresBackendOptions {
+  readonly lazy?: boolean;
   readonly client: PostgresRpcClient;
   readonly delegatedGrant?: string;
   readonly documentCodec?: TextDocumentCodec;
@@ -59,6 +62,7 @@ export const createPostgresBackend = (options: PostgresBackendOptions): Workspac
 };
 
 class PostgresBackend implements WorkspaceBackend {
+  private readonly lazy: boolean;
   readonly capabilities = POSTGRES_WORKSPACE_CAPABILITIES;
   readonly documentCodec: TextDocumentCodec;
   private readonly client: PostgresRpcClient;
@@ -67,6 +71,7 @@ class PostgresBackend implements WorkspaceBackend {
   private readonly workspace: string;
 
   constructor(options: PostgresBackendOptions) {
+    this.lazy = options.lazy ?? false;
     this.client = options.client;
     this.documentCodec = options.documentCodec ?? plainTextDocumentCodec;
     this.delegatedGrant = options.delegatedGrant;
@@ -169,13 +174,38 @@ class PostgresBackend implements WorkspaceBackend {
     );
   }
 
-  loadSnapshot(): Promise<PinnedSnapshot> {
-    return this.call(
+  async loadSnapshot(): Promise<PinnedSnapshot> {
+    if (!this.lazy) {
+      return this.call(
+        'supabash_load_workspace',
+        { p_workspace_id: this.workspace },
+        'snapshot-load',
+        decodeSnapshot,
+      );
+    }
+    const snapshot = await this.call(
       RPC.loadWorkspace,
       { p_workspace_id: this.workspace },
       'snapshot-load',
-      decodeSnapshot,
+      decodeManifest,
     );
+    return {
+      ...snapshot,
+      loadSnapshot: (revision) =>
+        this.call(
+          'supabash_load_pinned_snapshot',
+          { p_workspace_id: this.workspace, p_revision_id: revision },
+          'revision-load',
+          decodeSnapshot,
+        ),
+      loadDocument: (revision, path) =>
+        this.call(
+          'supabash_load_document',
+          { p_workspace_id: this.workspace, p_revision_id: revision, p_path: path },
+          'revision-load',
+          decodeDocument,
+        ),
+    };
   }
 
   purge(options: PurgeOptions): Promise<PurgeReceipt> {

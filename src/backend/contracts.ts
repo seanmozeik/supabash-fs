@@ -13,20 +13,25 @@ import type {
   RevisionDiffInput,
 } from '../api/history.js';
 
-export interface BackendDocument {
-  readonly body: string;
+export interface DocumentEntry {
   readonly bodyByteSize: number;
   readonly bodyHash: string;
   readonly byteSize: number;
-  readonly content: string;
   readonly contentHash: string;
   readonly metadata: DocumentMetadata;
   readonly path: string;
 }
 
+export interface BackendDocument extends DocumentEntry {
+  readonly body: string;
+  readonly content: string;
+}
+
 export interface PinnedSnapshot {
   readonly committedAt?: Date;
-  readonly documents: readonly BackendDocument[];
+  readonly documents: readonly (DocumentEntry | BackendDocument)[];
+  readonly loadDocument?: (revision: string, path: string) => Promise<BackendDocument>;
+  readonly loadSnapshot?: (revision: string) => Promise<PinnedSnapshot>;
   readonly revision: string | null;
   readonly transactionId?: string;
 }

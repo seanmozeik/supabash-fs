@@ -91,12 +91,14 @@ declare const delegated: DelegatedPostgresWorkspace;
 const workspace: Promise<Workspace> = Supabash.open(options);
 const postgresWorkspace: Promise<PostgresWorkspace> = Supabash.openPostgres(postgresOptions);
 const error = new SupabashError('STORAGE', 'test');
-const snapshot: PostgresWorkspaceSnapshot = delegated.committedSnapshot();
+const snapshot: PostgresWorkspaceSnapshot = await delegated.committedSnapshot();
+const revision: string | null = delegated.committedRevision();
 const retryable: boolean = isRetryableSupabashError(error);
 void workspace;
 void postgresWorkspace;
 void error;
 void snapshot;
+void revision;
 void retryable;
 `,
     ),

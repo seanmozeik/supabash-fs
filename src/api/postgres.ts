@@ -17,7 +17,9 @@ export type PostgresWorkspaceCapabilities = typeof POSTGRES_WORKSPACE_CAPABILITI
 export interface PostgresWorkspace extends Workspace {
   readonly capabilities: PostgresWorkspaceCapabilities;
   /** A detached copy of the committed base. Staged filesystem changes are excluded. */
-  readonly committedSnapshot: () => PostgresWorkspaceSnapshot;
+  readonly committedSnapshot: () => Promise<PostgresWorkspaceSnapshot>;
+  /** The pinned revision, without loading document bodies. */
+  readonly committedRevision: () => string | null;
 }
 
 export interface PostgresWorkspaceDocumentSnapshot {

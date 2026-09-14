@@ -1,6 +1,6 @@
 {
   "name": "@seanmozeik/supabash-fs",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Authenticated Supabase Storage and Postgres workspace filesystems for Just Bash, Apply Patch, and durable revisions.",
   "keywords": [
     "apply-patch",
@@ -39,6 +39,8 @@
       "import": "./dist/ai-sdk.js"
     },
     "./postgres/install.sql": "./sql/postgres/0001_install.sql",
+    "./postgres/lazy-reads.sql": "./sql/postgres/0002_lazy_reads.sql",
+    "./postgres/versioned-entries.sql": "./sql/postgres/0003_versioned_entries.sql",
     "./postgres/remove.sql": "./sql/postgres/0001_remove.sql",
     "./package.json": "./package.json"
   },

@@ -23,8 +23,6 @@ import {
 } from '../api/postgres.js';
 import { comparePaths } from '../core/entry-order.js';
 import { startOperation } from '../core/observability.js';
-import { isSameOrDescendant } from '../core/path.js';
-import { isRuntimeOwnedPath } from '../core/runtime-paths.js';
 import type { PendingChanges, UploadEntry } from '../core/storage.js';
 import type { TrackedFileSystem } from '../core/tracked-file-system.js';
 import {
@@ -44,12 +42,14 @@ import {
   normalizePurgeOptions,
 } from '../history/quota.js';
 import { commitAttempt, type PendingCommitAttempt } from './commit-attempt.js';
+import { committedTree } from './committed-tree.js';
 import type {
   BackendDocument,
   BackendMutation,
   PinnedSnapshot,
   WorkspaceBackend,
 } from './contracts.js';
+import { persistentPending } from './pending.js';
 import { publicSnapshot } from './public-snapshot.js';
 import {
   bodyLoader,
@@ -126,8 +126,12 @@ class BackendWorkspace implements PostgresWorkspace {
     return publicChanges(this.fs);
   }
 
-  committedSnapshot(): PostgresWorkspaceSnapshot {
+  committedSnapshot(): Promise<PostgresWorkspaceSnapshot> {
     return publicSnapshot(this.snapshot);
+  }
+
+  committedRevision(): string | null {
+    return this.snapshot.revision;
   }
 
   checkpoint(options: CheckpointOptions = {}): Promise<CheckpointReceipt> {
@@ -174,7 +178,7 @@ class BackendWorkspace implements PostgresWorkspace {
         }),
         transactionId: attempt.transactionId,
       });
-      this.snapshot = await snapshotFromFileSystem(this.fs, this.documentCodec, result.receipt);
+      this.snapshot = committedTree(this.snapshot, pending, prepared.documents, result.receipt);
       this.replaceSnapshotBodies(this.snapshot);
       await this.fs.finishCommit(entriesFrom(this.snapshot));
       this.pendingCommit = undefined;
@@ -199,12 +203,14 @@ class BackendWorkspace implements PostgresWorkspace {
     this.restoreSourceRevision = undefined;
   }
 
-  diff(input: RevisionDiffInput): Promise<RevisionDiff> {
-    return snapshotFromFileSystem(this.fs, this.documentCodec).then((staged) =>
-      this.backend.diff(
-        { ...input, previewBytes: diffPreviewLimit(input.previewBytes, this.limits) },
-        staged,
-      ),
+  async diff(input: RevisionDiffInput): Promise<RevisionDiff> {
+    const staged =
+      'staged' in input.from || 'staged' in input.to
+        ? await snapshotFromFileSystem(this.fs, this.documentCodec)
+        : { documents: [], revision: null };
+    return this.backend.diff(
+      { ...input, previewBytes: diffPreviewLimit(input.previewBytes, this.limits) },
+      staged,
     );
   }
 
@@ -231,7 +237,7 @@ class BackendWorkspace implements PostgresWorkspace {
         previewBytes: diffPreviewLimit(this.limits.maxDiffPreviewBytes, this.limits),
         to: { revision },
       },
-      this.snapshot,
+      { documents: [], revision: null },
     );
     await this.fs.stageRemoteTree(entriesFrom(target), bodyLoader(target));
     this.restoreSourceRevision = revision;
@@ -316,34 +322,5 @@ const mutationsFrom = (
   ].toSorted((left, right) => comparePaths(left.path, right.path));
 };
 
-const persistentPending = (fs: TrackedFileSystem): PendingChanges => {
-  const pending = fs.pendingPreview();
-  const moves = pending.moves.filter(
-    ({ from, to }) => !isRuntimeOwnedPath(from) && !isRuntimeOwnedPath(to),
-  );
-  return {
-    deletions: pending.deletions.filter(({ path }) => !isRuntimeOwnedPath(path)),
-    moves,
-    upserts: pending.upserts.filter(
-      (path) => !isRuntimeOwnedPath(path) && !derivedDirectory(fs, path),
-    ),
-  };
-};
-
 const publicChanges = (fs: TrackedFileSystem): readonly WorkspaceChange[] =>
   previewWorkspaceChanges(persistentPending(fs), (path) => fs.kindOf(path));
-
-const derivedDirectory = (fs: TrackedFileSystem, path: string): boolean => {
-  if (fs.kindOf(path) !== 'directory') {
-    return false;
-  }
-  return fs
-    .getAllPaths()
-    .some(
-      (candidate) =>
-        candidate !== path &&
-        !isRuntimeOwnedPath(candidate) &&
-        isSameOrDescendant(candidate, path) &&
-        fs.kindOf(candidate) !== 'directory',
-    );
-};

@@ -1,4 +1,4 @@
-import { SupabashError } from '../api/errors.js';
+import { isSupabashError, SupabashError } from '../api/errors.js';
 import { asUnknownRecord, type JsonValue } from '../api/json.js';
 
 export interface PostgresRpcClient {
@@ -19,6 +19,8 @@ export interface PostgresRpcCallOptions {
   readonly outcomeUnknownOnTransportFailure?: boolean;
 }
 
+const GATEWAY_FAILURE_STATUSES: ReadonlySet<unknown> = new Set([502, 503, 504]);
+
 export const callPostgresRpc = async <T>(
   client: PostgresRpcClient,
   name: string,
@@ -38,12 +40,45 @@ export const callPostgresRpc = async <T>(
   }
   const record = asUnknownRecord(response);
   if (record === undefined || !('data' in record) || !('error' in record)) {
-    throw new SupabashError('STORAGE', 'Postgres RPC returned an invalid response.');
+    throw new SupabashError('STORAGE', 'Postgres RPC returned an invalid response.', {
+      outcomeUnknown: options.outcomeUnknownOnTransportFailure ?? false,
+    });
   }
   if (record['error'] !== null) {
-    throw postgresError(parseFailure(record['error']));
+    const failure = parseFailure(record['error']);
+    // Supabase resolves fetch failures with status 0 instead of rejecting.
+    // An unstructured gateway failure can also hide an accepted mutation.
+    const { status } = record;
+    if (
+      status === 0 ||
+      (GATEWAY_FAILURE_STATUSES.has(status) && (failure.code === undefined || failure.code === ''))
+    ) {
+      throw new SupabashError('STORAGE', 'Postgres RPC transport failed.', {
+        cause: failure,
+        outcomeUnknown: options.outcomeUnknownOnTransportFailure ?? false,
+        retryable: true,
+      });
+    }
+    throw postgresError(failure);
   }
-  return decode(record['data']);
+  try {
+    return decode(record['data']);
+  } catch (cause) {
+    if (options.outcomeUnknownOnTransportFailure === true) {
+      if (isSupabashError(cause)) {
+        throw new SupabashError(cause.code, cause.message, {
+          cause,
+          outcomeUnknown: true,
+          ...(cause.path !== undefined && { path: cause.path }),
+        });
+      }
+      throw new SupabashError('STORAGE', 'Postgres mutation response could not be verified.', {
+        cause,
+        outcomeUnknown: true,
+      });
+    }
+    throw cause;
+  }
 };
 
 const parseFailure = (value: unknown): PostgrestFailure => {
@@ -63,8 +98,32 @@ const parseFailure = (value: unknown): PostgrestFailure => {
   };
 };
 
+const RETRYABLE_TRANSACTION_CODES: ReadonlySet<string | undefined> = new Set([
+  '55P03',
+  '40P01',
+  '40001',
+]);
+const CONNECTION_REJECTION_CODES: ReadonlySet<string | undefined> = new Set([
+  'PGRST000',
+  'PGRST001',
+  'PGRST002',
+  'PGRST003',
+]);
+
 export const postgresError = (error: PostgrestFailure): SupabashError => {
-  const stable = `${error.message} ${error.details ?? ''} ${error.hint ?? ''}`;
+  if (CONNECTION_REJECTION_CODES.has(error.code)) {
+    return new SupabashError('STORAGE', 'Postgres connection is unavailable.', {
+      cause: error,
+      retryable: true,
+    });
+  }
+  if (RETRYABLE_TRANSACTION_CODES.has(error.code)) {
+    return new SupabashError('COMMIT_COORDINATION', 'Postgres transaction must be retried.', {
+      cause: error,
+      retryable: true,
+    });
+  }
+  const stable = [error.message, error.details, error.hint].join(' ');
   if (stable.includes('SUPABASH_EXPIRED_CAPABILITY')) {
     return new SupabashError('EXPIRED_CAPABILITY', 'Delegated capability has expired.', {
       cause: error,

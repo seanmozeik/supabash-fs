@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.7.0 (unreleased)
+
+Breaking. Postgres `committedSnapshot()` now returns a promise. Use
+`await workspace.committedSnapshot()` for a detached full snapshot, or
+`workspace.committedRevision()` when only the pinned revision is needed.
+
+Apply `0002_lazy_reads.sql` and `0003_versioned_entries.sql`, in order, to an
+existing 0.6.0 database before upgrading clients. New installations apply
+`0001_install.sql` first. The upgrade retains existing history and seeds new
+version intervals from current documents under a database lock.
+
+- Open Postgres workspaces with path descriptors and load bodies on demand.
+  Full committed snapshots use one pinned bulk request.
+- Verify loaded document bytes against their stored hashes. Compare saved
+  revisions without loading or parsing the current working tree.
+- Store changed file versions instead of copying the whole revision index on
+  each commit. Preserve retained revisions and checkpoints during purge.
+- Evaluate the allowed workspace set once per statement in file-table policies.
+- Cache the private ownership and revision-entry query plans per connection.
+- Decode upserts once, validate receipts without repeated array copies, and use
+  set-based writes for distinct upsert batches of at least 16 files.
+- Bound commit, checkpoint, and purge lock waits to one second. Return retryable
+  coordination errors for lock timeout, deadlock, and serialization failure.
+- Preserve unknown mutation outcomes for returned network and gateway failures.
+  Mark rejected database connections and pool waits as retryable.
+- Keep transient session-verification failures retryable instead of treating
+  an unavailable Auth service as an invalid user session.
+- Add a disposable Modal stress harness and live upgrade, batch rollback, pinned
+  read, and storage-growth checks. Capacity depends on the tested deployment;
+  this release does not establish support for one million concurrent users.
+
 ## 0.6.0
 
 Breaking. Agent tools now bind to `createTools({ filesystem })`. Pass a workspace's

@@ -48,9 +48,12 @@ describe('postgres committed snapshot', () => {
       '---\ndescription: Durable pacing context\n---\n# Pacing\n',
     );
 
-    expect(opened.committedSnapshot()).toMatchObject({ documents: [], revision: null });
+    await expect(opened.committedSnapshot()).resolves.toMatchObject({
+      documents: [],
+      revision: null,
+    });
     await opened.commit({ context: { actor: 'agent', correlationId: 'correlation-1' } });
-    const committed = opened.committedSnapshot();
+    const committed = await opened.committedSnapshot();
     expect(committed).toMatchObject({
       committedAt: new Date('2026-08-28T19:00:00.000Z'),
       documents: [
@@ -69,6 +72,7 @@ describe('postgres committed snapshot', () => {
       Object.isFrozen(committed.documents[0]?.metadata),
     ]).toStrictEqual([true, true, true]);
     committed.committedAt?.setUTCFullYear(2000);
-    expect(opened.committedSnapshot().committedAt?.getUTCFullYear()).toBe(2026);
+    const detached = await opened.committedSnapshot();
+    expect(detached.committedAt?.getUTCFullYear()).toBe(2026);
   });
 });

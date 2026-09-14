@@ -17,7 +17,7 @@ import type {
   RevisionDiffKind,
 } from '../api/history.js';
 import type { JsonValue } from '../api/json.js';
-import type { BackendDocument, PinnedSnapshot } from '../backend/contracts.js';
+import type { BackendDocument, DocumentEntry, PinnedSnapshot } from '../backend/contracts.js';
 import { normalizeVirtualPath } from '../core/path.js';
 import { isRuntimeOwnedPath } from '../core/runtime-paths.js';
 import {
@@ -54,6 +54,49 @@ export const decodeSnapshot = (value: unknown): PinnedSnapshot => {
     revision,
     ...(committedAt !== undefined && { committedAt: date(committedAt, 'snapshot committedAt') }),
     ...(transactionId !== undefined && { transactionId }),
+  };
+};
+
+export const decodeManifest = (value: unknown): PinnedSnapshot => {
+  const record = object(value, 'manifest');
+  const revision = nullableString(record, 'headRevision');
+  const committedAt = optionalString(record, 'committedAt');
+  const transactionId = optionalString(record, 'transactionId');
+  const documents = array(record, 'documents').map((entry) => decodeDocumentEntry(entry));
+  if (
+    new Set(documents.map(({ path }) => path)).size !== documents.length ||
+    (revision === null && documents.length > 0)
+  ) {
+    throw corrupt('Postgres manifest has duplicate paths or no revision.');
+  }
+  return {
+    documents,
+    revision,
+    ...(committedAt !== undefined && { committedAt: date(committedAt, 'manifest committedAt') }),
+    ...(transactionId !== undefined && { transactionId }),
+  };
+};
+
+const decodeDocumentEntry = (value: unknown): DocumentEntry => {
+  const record = object(value, 'document entry');
+  const path = string(record, 'path');
+  const bodyHash = string(record, 'bodyHash');
+  const contentHash = string(record, 'contentHash');
+  if (
+    normalizeVirtualPath(path) !== path ||
+    isRuntimeOwnedPath(path) ||
+    !SHA256.test(bodyHash) ||
+    !SHA256.test(contentHash)
+  ) {
+    throw corrupt('Postgres manifest entry has an invalid path or hash.', path);
+  }
+  return {
+    path,
+    bodyHash,
+    contentHash,
+    bodyByteSize: number(record, 'bodyByteSize'),
+    byteSize: number(record, 'byteSize'),
+    metadata: documentMetadata(optionalJsonObject(record, 'metadata') ?? {}, record),
   };
 };
 
@@ -125,7 +168,7 @@ export const decodePurge = (value: unknown): PurgeReceipt => {
   };
 };
 
-const decodeDocument = (value: unknown): BackendDocument => {
+export const decodeDocument = (value: unknown): BackendDocument => {
   const record = object(value, 'snapshot document');
   const body = text(record, 'body');
   const bodyHash = string(record, 'bodyHash', 'body_hash');

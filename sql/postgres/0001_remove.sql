@@ -2,6 +2,11 @@
 
 begin;
 
+drop function if exists public.supabash_load_pinned_snapshot(uuid, uuid, text);
+
+drop function if exists public.supabash_load_document(uuid, uuid, text, text);
+drop function if exists public.supabash_load_manifest(uuid, text);
+
 drop function if exists public.supabash_purge(uuid, integer, bigint, boolean, text);
 drop function if exists public.supabash_delete_checkpoint(uuid, uuid, text);
 drop function if exists public.supabash_diff(uuid, jsonb, jsonb, text[], integer, jsonb, text);

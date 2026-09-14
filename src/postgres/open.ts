@@ -23,6 +23,7 @@ export const openPostgres = async (
 ): Promise<PostgresWorkspace> => {
   const { client } = await authenticate(options);
   const backend = createPostgresBackend({
+    lazy: true,
     client,
     workspace: options.workspace,
     ...(options.documentCodec !== undefined && { documentCodec: options.documentCodec }),
@@ -78,6 +79,7 @@ export const openPostgresDelegated = async (
     { outcomeUnknownOnTransportFailure: true },
   );
   const backend = createPostgresBackend({
+    lazy: true,
     client,
     delegatedGrant: grant.delegatedGrant,
     workspace: grant.workspace,

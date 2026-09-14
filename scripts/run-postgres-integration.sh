@@ -119,14 +119,27 @@ eval "$status_environment"
 unset status_environment
 
 installation_attempted=1
+docker exec "$database_container" mkdir -p /tmp/supabash-upgrade/tests/postgres
+docker cp "$repo_root/sql" "$database_container:/tmp/supabash-upgrade/sql"
+docker cp "$repo_root/tests/postgres/upgrade.sql" "$database_container:/tmp/supabash-upgrade/tests/postgres/upgrade.sql"
+docker exec "$database_container" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f /tmp/supabash-upgrade/tests/postgres/upgrade.sql > "$results_dir/upgrade.log"
 psql_file "$install_sql"
+psql_file "$repo_root/sql/postgres/0002_lazy_reads.sql"
+psql_file "$repo_root/sql/postgres/0003_versioned_entries.sql"
 psql_file "$test_support_sql"
 
-readonly function_config='{"supabash-postgres-smoke":{"verifyJWT":false,"entrypointPath":"/workspace/tests/postgres/edge-smoke/index.ts","importMapPath":"/workspace/deno.check.json"}}'
+mkdir -p "$results_dir/edge"
+# Edge Runtime does not apply Deno's sloppy-imports to TypeScript .js specifiers.
+# Bundle the candidate source and erase type-only imports before running it.
+(cd "$repo_root" && bun build tests/postgres/edge-smoke/index.ts --target browser --packages external --outfile "$results_dir/edge/index.js")
+cp "$repo_root/deno.check.json" "$results_dir/edge/deno.json"
+readonly function_config='{"supabash-postgres-smoke":{"verifyJWT":false,"entrypointPath":"/edge/index.js","importMapPath":"/edge/deno.json"}}'
 
 docker run --detach --rm --network host \
   --name "$edge_container" \
   --volume "$repo_root:/workspace:ro" \
+  --volume "$results_dir/edge:/edge:ro" \
   --volume "$edge_main_file:/root/index.ts:ro" \
   --volume "$edge_cache_volume:/root/.cache/deno" \
   --env "SUPABASH_TEST_SUPABASE_URL=$API_URL" \

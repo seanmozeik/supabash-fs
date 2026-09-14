@@ -1,3 +1,5 @@
+import { proveBatchWrites } from './batch/live.ts';
+import { proveLazyReads } from './lazy/live.ts';
 import { asRecord, assert, parseJson, type JsonRecord, type LiveContext } from './live-context.ts';
 import { proveCore } from './live-core.ts';
 import { proveHistoryAndRetention } from './live-history.ts';
@@ -10,6 +12,8 @@ export const runPostgresIntegration = async (
 ): Promise<JsonRecord> => {
   const firstUser = await context.createUser('owner-a');
   const secondUser = await context.createUser('owner-b');
+  await proveLazyReads(context, firstUser, secondUser);
+  await proveBatchWrites(context, firstUser);
   const core = await proveCore(context, firstUser);
   const history = await proveHistoryAndRetention(context, core);
   await proveSecurity(context, core, secondUser, history.checkpointId);
