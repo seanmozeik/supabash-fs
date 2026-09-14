@@ -45,7 +45,7 @@ try {
       JSON.stringify({
         dependencies: {
           '@seanmozeik/supabash-fs': `file:${tarball}`,
-          '@types/node': '26.2.0',
+          '@types/node': '26.5.1',
           'just-bash': '3.4.2',
           typescript: '7.0.2',
         },

@@ -2,6 +2,10 @@
 
 ## 0.7.0 (unreleased)
 
+Dependencies: Supabase JS 2.116.0, Unbash 4.0.11, YAML 2.9.1, AI SDK 7.0.100,
+and OpenAI provider 4.0.66. Development types and lint tools are updated. Deno
+imports and packed-consumer fixtures use the same versions.
+
 Breaking. Postgres `committedSnapshot()` now returns a promise. Use
 `await workspace.committedSnapshot()` for a detached full snapshot, or
 `workspace.committedRevision()` when only the pinned revision is needed.

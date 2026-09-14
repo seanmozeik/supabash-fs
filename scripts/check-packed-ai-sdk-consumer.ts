@@ -43,10 +43,10 @@ try {
       path.join(consumerDirectory, 'package.json'),
       JSON.stringify({
         dependencies: {
-          '@ai-sdk/openai': '4.0.50',
+          '@ai-sdk/openai': '4.0.66',
           '@seanmozeik/supabash-fs': `file:${tarball}`,
-          '@types/node': '26.2.0',
-          ai: '7.0.83',
+          '@types/node': '26.5.1',
+          ai: '7.0.100',
           'bash-tool': '1.3.19',
           'just-bash': '3.4.2',
           typescript: '7.0.2',

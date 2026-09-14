@@ -130,7 +130,7 @@ Bun.Glob, and Tripwire's opinionated toolchain denies are not used.
 ## Unbash
 
 - Source: <https://github.com/webpro-nl/unbash>
-- Compatible package version during development: `4.0.10`
+- Compatible package version during development: `4.0.11`
 - Copyright: Copyright (c) Lars Kappert
 - Licence: ISC
 
@@ -155,7 +155,7 @@ PERFORMANCE OF THIS SOFTWARE.
 ## YAML
 
 - Source: <https://github.com/eemeli/yaml>
-- Compatible package version during development: `2.9.0`
+- Compatible package version during development: `2.9.1`
 - Copyright: Copyright Eemeli Aro <eemeli@gmail.com>
 - Licence: ISC
 
