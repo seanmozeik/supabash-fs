@@ -1,6 +1,10 @@
 \set ON_ERROR_STOP on
 
 begin;
+drop function if exists public.supabash_redact(uuid, text[], text[], uuid, boolean, text, text[], boolean, text);
+drop function if exists public.supabash_restore_floor(uuid, text);
+drop function if exists public.supabash_history(uuid, text, integer, text, text);
+drop function if exists public.supabash_purge(uuid, integer, bigint, boolean, text, uuid);
 
 drop function if exists public.supabash_load_pinned_snapshot(uuid, uuid, text);
 

@@ -1,5 +1,6 @@
-import { asRecord, assert, expectCode, type LiveContext } from './live-context.ts';
-import type { CoreProof } from './live-core.ts';
+import { asRecord, assert, expectCode, type LiveContext } from './context.ts';
+import type { CoreProof } from './core.ts';
+import { proveRedaction } from './redaction.ts';
 
 export interface HistoryProof {
   readonly checkpointId: string;
@@ -14,6 +15,7 @@ export const proveHistoryAndRetention = async (
   await proveIdempotency(context, core.user.accessToken);
   await provePurge(context, core.user.accessToken);
   await proveManifestGrowth(context, core.user.accessToken);
+  await proveRedaction(context, core.user.accessToken);
   return { checkpointId };
 };
 

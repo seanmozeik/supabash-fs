@@ -1,6 +1,6 @@
 import { Supabash, type PostgresWorkspace, type TextDocumentCodec } from '@seanmozeik/supabash-fs';
 
-import type { IntegrationRuntime } from './runtime.ts';
+import type { IntegrationRuntime } from '../runtime.ts';
 
 export type Json = null | boolean | number | string | Json[] | JsonRecord;
 export interface JsonRecord {

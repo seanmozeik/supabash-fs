@@ -1,3 +1,4 @@
+import { SupabashError } from '../api/errors.js';
 import type { PurgeOptions, PurgeReceipt } from '../api/history.js';
 import type { HistoryBlobStore } from './blob-store.js';
 import { readJson } from './json-io.js';
@@ -15,6 +16,21 @@ export const purgeHistory = async (
   const head = await readJson(history, historyKey.head, parseHead);
   const records = await loadRevisions(history);
   const pinned = await pinnedRevisions(history, head);
+  if (normalized.keepAfterRevision !== undefined) {
+    const chain = keepRecent(records, head, Number.MAX_SAFE_INTEGER);
+    if (!chain.has(normalized.keepAfterRevision)) {
+      throw new SupabashError(
+        'REVISION_NOT_FOUND',
+        'Retention floor must be on the retained head chain.',
+      );
+    }
+    for (const revision of chain) {
+      pinned.add(revision);
+      if (revision === normalized.keepAfterRevision) {
+        break;
+      }
+    }
+  }
   const keptByCount = keepRecent(records, head, maxRevisions);
   const cutoff = normalized.maxAgeMs === undefined ? undefined : Date.now() - normalized.maxAgeMs;
   const removable = records.filter((record) => {

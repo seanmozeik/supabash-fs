@@ -8,6 +8,8 @@ import type {
   HistoryQuery,
   PurgeOptions,
   PurgeReceipt,
+  RedactOptions,
+  RedactReceipt,
   RevisionDiff,
   RevisionDiffInput,
 } from '../api/history.js';
@@ -29,6 +31,8 @@ import {
   decodeDiff,
   decodeHistoryPage,
   decodePurge,
+  decodeRedact,
+  decodeRestoreFloor,
   decodeSnapshot,
   decodeManifest,
   decodeDocument,
@@ -157,6 +161,7 @@ class PostgresBackend implements WorkspaceBackend {
       RPC.history,
       {
         p_cursor: query?.cursor ?? null,
+        ...(query?.cursorMissing !== undefined && { p_cursor_missing: query.cursorMissing }),
         p_limit: query?.limit ?? null,
         p_workspace_id: this.workspace,
       },
@@ -214,11 +219,41 @@ class PostgresBackend implements WorkspaceBackend {
       {
         p_dry_run: options.dryRun ?? false,
         p_max_age_ms: options.maxAgeMs ?? null,
+        ...(options.keepAfterRevision !== undefined && {
+          p_keep_after_revision: options.keepAfterRevision,
+        }),
         p_max_revisions: options.maxRevisions ?? null,
         p_workspace_id: this.workspace,
       },
       'purge',
       decodePurge,
+    );
+  }
+
+  redact(options: RedactOptions): Promise<RedactReceipt> {
+    return this.call(
+      'supabash_redact',
+      {
+        p_workspace_id: this.workspace,
+        p_paths: options.paths ?? null,
+        p_body_hashes: options.bodyHashes ?? null,
+        p_before_revision: options.before ?? null,
+        p_dry_run: options.dryRun ?? false,
+        p_reason: options.reason ?? null,
+        p_metadata_keys: options.metadataKeys ?? null,
+        p_clear_cause: options.clearCause ?? false,
+      },
+      'redact',
+      decodeRedact,
+    );
+  }
+
+  restoreFloor(): Promise<string | null> {
+    return this.call(
+      'supabash_restore_floor',
+      { p_workspace_id: this.workspace },
+      'restore-floor',
+      decodeRestoreFloor,
     );
   }
 
@@ -264,6 +299,7 @@ const MUTATING_OPERATIONS: ReadonlySet<WorkspaceOperation> = new Set([
   'checkpoint-delete',
   'commit',
   'purge',
+  'redact',
 ]);
 
 const serializedBytes = (value: unknown): number =>

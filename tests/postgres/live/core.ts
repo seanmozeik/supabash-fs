@@ -2,8 +2,8 @@ import { createYamlFrontmatterCodec, type CommitReceipt } from '@seanmozeik/supa
 import { createTools } from '@seanmozeik/supabash-fs/ai-sdk';
 import type { ToolSet } from 'ai';
 
-import { invokeTool, resultField } from '../deno/tool-runtime.ts';
-import { assert, errorCode, type LiveContext, type TestUser } from './live-context.ts';
+import { invokeTool, resultField } from '../../deno/tool-runtime.ts';
+import { assert, errorCode, type LiveContext, type TestUser } from './context.ts';
 
 export interface CoreProof {
   readonly atomic: CommitReceipt;

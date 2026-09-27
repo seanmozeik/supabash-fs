@@ -10,6 +10,8 @@ export type WorkspaceOperation =
   | 'filesystem-projection'
   | 'history'
   | 'purge'
+  | 'redact'
+  | 'restore-floor'
   | 'revision-load'
   | 'snapshot-load';
 

@@ -1,7 +1,7 @@
 import type { CommitOptions } from '../api/commit.js';
 import type { CommitReceipt, WorkspaceChange } from '../api/contracts.js';
 import type { TextDocumentCodec } from '../api/document-codec.js';
-import { isUnknownOutcomeSupabashError, SupabashError } from '../api/errors.js';
+import { isSupabashError, isUnknownOutcomeSupabashError, SupabashError } from '../api/errors.js';
 import type {
   CheckpointOptions,
   CheckpointReceipt,
@@ -10,6 +10,8 @@ import type {
   HistoryQuery,
   PurgeOptions,
   PurgeReceipt,
+  RedactOptions,
+  RedactReceipt,
   ReadonlyWorkspaceView,
   RestorePlan,
   RevisionDiff,
@@ -224,9 +226,28 @@ class BackendWorkspace implements PostgresWorkspace {
     return Promise.resolve().then(() => this.backend.purge(normalizePurgeOptions(options)));
   }
 
+  redact(options: RedactOptions): Promise<RedactReceipt> {
+    return this.backend.redact(options);
+  }
+
+  restoreFloor(): Promise<string | null> {
+    return this.backend.restoreFloor();
+  }
+
   async readRevision(revision: string): Promise<ReadonlyWorkspaceView> {
-    const snapshot = await this.backend.loadRevision(revision);
-    return readonlyView(snapshot, revision);
+    try {
+      const snapshot = await this.backend.loadRevision(revision);
+      return readonlyView(snapshot, revision);
+    } catch (error) {
+      if (isSupabashError(error) && error.code === 'RESTORE_CROSSES_REDACTION') {
+        throw new SupabashError(
+          'REDACTED',
+          'The requested historical view crosses a redaction boundary.',
+          { cause: error },
+        );
+      }
+      throw error;
+    }
   }
 
   async restore(revision: string): Promise<RestorePlan> {

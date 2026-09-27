@@ -20,6 +20,19 @@
   / `--pre=...` preprocessors. Alias `node:zlib` to a throwing compression stub.
 - Preserve the model-facing tool description byte-for-byte: its known-command
   list contains none of `gzip`, `gunzip`, `zcat` or `rg`.
+- Add Postgres `redact` with exact path/body-hash selectors, exclusive revision
+  boundaries, atomic dry runs, metadata-key removal, cause clearing, and receipts.
+  Historical entries become tombstones and unreferenced bodies are reclaimed.
+- Add forced-RLS redaction audit events, a distinct delegated `redact` operation,
+  `restoreFloor()`, and SQL load/commit restore fences that survive purge.
+- Historical views reject with `REDACTED`; fenced restores reject with
+  `RESTORE_CROSSES_REDACTION`; diffs return `unavailable` without previews.
+- Add inclusive `purge({ keepAfterRevision })` protection and opt-in
+  `history({ cursorMissing: 'oldest' })` recovery. Postgres history traverses
+  retained revisions across purge gaps.
+- Ship the idempotent `0004_redact_retention.sql` upgrade for populated 0.7.0
+  installations, update install/remove flows, and add unit/live upgrade,
+  deduplication, metadata, capability-isolation, and restore-fence coverage.
 
 ## 0.7.0 (unreleased)
 

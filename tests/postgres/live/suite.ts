@@ -1,10 +1,10 @@
-import { proveBatchWrites } from './batch/live.ts';
-import { proveLazyReads } from './lazy/live.ts';
-import { asRecord, assert, parseJson, type JsonRecord, type LiveContext } from './live-context.ts';
-import { proveCore } from './live-core.ts';
-import { proveHistoryAndRetention } from './live-history.ts';
-import { proveMountedPublishing } from './live-mounts.ts';
-import { proveSecurity } from './live-security.ts';
+import { proveBatchWrites } from '../batch/live.ts';
+import { proveLazyReads } from '../lazy/live.ts';
+import { asRecord, assert, parseJson, type JsonRecord, type LiveContext } from './context.ts';
+import { proveCore } from './core.ts';
+import { proveHistoryAndRetention } from './history.ts';
+import { proveMountedPublishing } from './mounts.ts';
+import { proveSecurity } from './security.ts';
 
 export const runPostgresIntegration = async (
   context: LiveContext,

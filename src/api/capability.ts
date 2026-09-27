@@ -11,6 +11,7 @@ export type DelegatedOperation =
   | 'commit'
   | 'history'
   | 'purge'
+  | 'redact'
   | 'read'
   | 'restore'
   | 'write';
@@ -25,6 +26,7 @@ export const isDelegatedOperation = (value: string): value is DelegatedOperation
     case 'commit':
     case 'history':
     case 'purge':
+    case 'redact':
     case 'read':
     case 'restore':
     case 'write': {

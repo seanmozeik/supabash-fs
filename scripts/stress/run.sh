@@ -23,7 +23,7 @@ snapshot() {
 }
 
 if [[ "${1:-}" == seed ]]; then
-  for file in sql/postgres/0001_install.sql sql/postgres/0002_lazy_reads.sql sql/postgres/0003_versioned_entries.sql; do
+  for file in sql/postgres/0001_install.sql sql/postgres/0002_lazy_reads.sql sql/postgres/0003_versioned_entries.sql sql/postgres/0004_redact_retention.sql; do
     docker exec -i supabase_db_stack psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$file" >> /results/stress-install.log 2>&1
   done
   docker exec -i supabase_db_stack psql -U postgres -d postgres -v ON_ERROR_STOP=1 < scripts/stress/seed.sql > /results/seed-sql.log

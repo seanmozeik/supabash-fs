@@ -124,6 +124,19 @@ export const postgresError = (error: PostgrestFailure): SupabashError => {
     });
   }
   const stable = [error.message, error.details, error.hint].join(' ');
+  return redactionError(error, stable) ?? workspaceError(error, stable);
+};
+
+const redactionError = (error: PostgrestFailure, stable: string): SupabashError | undefined => {
+  for (const code of ['REDACTED', 'REDACTION_CURRENT_BODY', 'RESTORE_CROSSES_REDACTION'] as const) {
+    if (stable.includes(`SUPABASH_${code}`)) {
+      return new SupabashError(code, `Postgres rejected the operation: ${code}.`, { cause: error });
+    }
+  }
+  return undefined;
+};
+
+const workspaceError = (error: PostgrestFailure, stable: string): SupabashError => {
   if (stable.includes('SUPABASH_EXPIRED_CAPABILITY')) {
     return new SupabashError('EXPIRED_CAPABILITY', 'Delegated capability has expired.', {
       cause: error,

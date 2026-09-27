@@ -1,12 +1,6 @@
-import { proveDelegated } from './live-capability.ts';
-import {
-  assert,
-  expectCode,
-  type JsonRecord,
-  type LiveContext,
-  type TestUser,
-} from './live-context.ts';
-import type { CoreProof } from './live-core.ts';
+import { proveDelegated } from './capability.ts';
+import { assert, expectCode, type JsonRecord, type LiveContext, type TestUser } from './context.ts';
+import type { CoreProof } from './core.ts';
 
 export const proveSecurity = async (
   context: LiveContext,
@@ -60,6 +54,7 @@ const proveIsolation = async (
     'document_versions',
     'delegated_grants',
     'revision_changes',
+    'redactions',
     'revision_entries',
     'settings',
     'workspace_revisions',
@@ -78,6 +73,8 @@ const deniedCalls = (
   core: CoreProof,
   checkpointId: string,
 ): readonly (readonly [string, JsonRecord])[] => [
+  ['supabash_redact', { p_workspace_id: core.workspaceId, p_paths: ['/docs/update.md'] }],
+  ['supabash_restore_floor', { p_workspace_id: core.workspaceId }],
   ['supabash_load_workspace', { p_workspace_id: core.workspaceId }],
   [
     'supabash_load_revision',

@@ -10,8 +10,8 @@ import {
 } from '@seanmozeik/supabash-fs';
 import { createTools } from '@seanmozeik/supabash-fs/ai-sdk';
 
-import { invokeTool, resultField } from '../deno/tool-runtime.ts';
-import { assert, expectCode, type LiveContext, type TestUser } from './live-context.ts';
+import { invokeTool, resultField } from '../../deno/tool-runtime.ts';
+import { assert, expectCode, type LiveContext, type TestUser } from './context.ts';
 
 export const proveMountedPublishing = async (
   context: LiveContext,
