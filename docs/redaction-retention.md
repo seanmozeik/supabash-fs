@@ -241,3 +241,33 @@ so previously recorded fences do not move.
 The live suite applies the upgrade twice to populated legacy/versioned data,
 checks preservation and redaction, and removes it afterward. It then installs a
 fresh schema for the HTTP, capability, and restore tests.
+
+## Host integration checklist
+
+Supabash supplies the primitives. The host owns the forget workflow around them.
+
+1. Apply `0004_redact_retention.sql` after the earlier migrations, and grant the
+   delegated `redact` operation only to the trusted forget flow.
+2. Commit the forget edit or delete first, then call `redact` with the affected
+   paths and `before` set to that commit's revision. Include every path that
+   holds a copy of the content, not only the user-visible file. Keep a durable
+   pending-forget record until `redact` succeeds, because commit and redact are
+   separate transactions.
+3. Do not store document content in revision metadata or `cause`. Store a digest
+   and keep the content in files. If older revisions already contain content in
+   metadata, remove those keys with `metadataKeys` and `clearCause`.
+4. Follow the revocation protocol above: retire workers, detached snapshots and
+   shared mounts that opened before the redaction, and reopen and retry on
+   `REDACTION_INVALIDATED`.
+5. Protect unconsumed work from retention. Checkpoint producer revisions when
+   they are created, derive the oldest pending revision, and pass it to
+   `purge` as `keepAfterRevision` together with `maxAgeMs` and `maxRevisions`.
+   Delete checkpoints only after the work is durably consumed.
+6. Readers that page history should use `cursorMissing: 'oldest'` and treat
+   purged parents and redacted revisions as deliberate gaps.
+7. A custom restore must check `restoreFloor()` and handle `REDACTED`, and it
+   should commit through the path that supplies `p_source_revision`, so the
+   commit-time fence applies.
+
+Content extraction, substring rewriting, lineage policy, a scheduled retention
+job and backup erasure are outside this package.
