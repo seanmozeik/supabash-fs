@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -39,6 +40,34 @@ try {
   );
   const packedName = packOutput.trim();
   const tarball = path.resolve(packageDirectory, packedName);
+  // Compile the actual packed core declarations before installing anything.
+  // This directory has neither ambient typings nor a node_modules ancestor.
+  const declarationsDirectory = path.join(temporaryRoot, 'declarations');
+  await mkdir(declarationsDirectory);
+  await run(['tar', '-xzf', tarball, '-C', declarationsDirectory], repository);
+  await Bun.write(
+    path.join(declarationsDirectory, 'tsconfig.json'),
+    JSON.stringify({
+      compilerOptions: {
+        lib: ['ESNext', 'DOM'],
+        module: 'NodeNext',
+        moduleResolution: 'NodeNext',
+        noEmit: true,
+        skipLibCheck: false,
+        strict: true,
+        target: 'ESNext',
+        types: [],
+      },
+      files: ['package/dist/index.d.ts'],
+    }),
+  );
+  await run(
+    [path.join(repository, 'node_modules/.bin/tsc'), '-p', 'tsconfig.json'],
+    declarationsDirectory,
+  );
+  process.stdout.write(
+    'Packed core declarations compile without installed packages or Node typings.\n',
+  );
   await Promise.all([
     Bun.write(
       path.join(consumerDirectory, 'package.json'),
@@ -46,7 +75,6 @@ try {
         dependencies: {
           '@seanmozeik/supabash-fs': `file:${tarball}`,
           '@supabase/supabase-js': '2.116.0',
-          '@types/node': '26.5.1',
           typescript: '7.0.2',
         },
         private: true,
@@ -112,13 +140,24 @@ void retryable;
           skipLibCheck: false,
           strict: true,
           target: 'ESNext',
-          types: ['node'],
+          types: [],
         },
         include: ['typecheck.ts'],
       }),
     ),
   ]);
-  await run([process.execPath, 'install', '--no-progress'], consumerDirectory);
+  await run(
+    [
+      process.execPath,
+      'install',
+      '--no-progress',
+      ...(process.argv.includes('--offline') ? ['--offline'] : []),
+    ],
+    consumerDirectory,
+  );
+  if (existsSync(path.join(consumerDirectory, 'node_modules/@types/node'))) {
+    throw new Error('Clean declaration consumer must not have @types/node installed.');
+  }
   await run([process.execPath, 'run', 'typecheck'], consumerDirectory);
   await run([process.execPath, 'run', 'smoke'], consumerDirectory);
   await run([process.execPath, 'peer-error.mjs'], consumerDirectory);

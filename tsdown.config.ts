@@ -1,5 +1,7 @@
 import { defineConfig } from 'tsdown';
 
+import { edgeDnsPinTypes } from './scripts/build/edge-dns-pin-plugin.ts';
+
 const peers = ['ai', '@supabase/supabase-js', '@ai-sdk/openai'];
 
 export default defineConfig({
@@ -10,6 +12,7 @@ export default defineConfig({
   treeshake: true,
   dts: true,
   sourcemap: false,
+  plugins: [edgeDnsPinTypes],
   deps: {
     neverBundle: peers,
     alwaysBundle: (id) => !peers.some((peer) => id === peer || id.startsWith(`${peer}/`)),

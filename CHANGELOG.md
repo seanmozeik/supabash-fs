@@ -33,6 +33,24 @@
 - Ship the idempotent `0004_redact_retention.sql` upgrade for populated 0.7.0
   installations, update install/remove flows, and add unit/live upgrade,
   deduplication, metadata, capability-isolation, and restore-fence coverage.
+- Breaking. Add a per-workspace redaction epoch. A successful `redact` increments
+  it, every Postgres commit sends the epoch its workspace opened with, and a
+  commit opened before a redaction fails with `REDACTION_INVALIDATED`. The
+  redacting instance discards staged changes and cached snapshots and reloads.
+  Hosts must retire and reopen other workers, detached snapshots and shared
+  mounts of a redacted workspace; see `docs/redaction-retention.md`.
+- The upgrade orders legacy revisions uniquely from timestamps and parent
+  links, and fails closed, naming the workspace, when that evidence is
+  ambiguous.
+- Repeated redaction ignores existing tombstones, explicit body-hash redaction
+  reclaims bodies that no revision entry references, and tombstones are
+  recognised by an internal tuple, so user frontmatter `redacted: true` stays
+  readable.
+- Storage retention rejects a purged `keepAfterRevision` floor, and purge keeps
+  minimal parent links so `cursorMissing: 'oldest'` finds retained revisions
+  across gaps. See `docs/storage-history.md`.
+- Bundled declarations no longer reference Node typings; the import check also
+  validates triple-slash references and module augmentations.
 
 ## 0.7.0 (unreleased)
 

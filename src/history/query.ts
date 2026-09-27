@@ -1,10 +1,11 @@
 import { SupabashError } from '../api/errors.js';
 import type { HistoryPage, HistoryQuery, HistoryRecord } from '../api/history.js';
+import { retainedChain } from './ancestry.js';
 import type { HistoryBlobStore } from './blob-store.js';
 import { readJson } from './json-io.js';
 import { HISTORY_ROOT, historyKey } from './keys.js';
 import type { WorkspaceLimits } from './limits.js';
-import { parseComplete, parseHead } from './parse.js';
+import { parseComplete, parseHead, parseRevision } from './parse.js';
 import { historyPageLimit } from './quota.js';
 import type { CompleteRecord } from './records.js';
 
@@ -46,22 +47,11 @@ const causalCompletes = async (
   if (head === undefined) {
     return [];
   }
-  const byRevision = new Map(completes.map((record) => [record.newRevision, record]));
-  const reverse: CompleteRecord[] = [];
-  const seen = new Set<string>();
-  let revision: string | null = head.revision;
-  while (revision !== null) {
-    if (seen.has(revision)) {
-      throw new SupabashError('HISTORY_CORRUPTION', 'Revision history contains a cycle.');
-    }
-    seen.add(revision);
-    const record = byRevision.get(revision);
-    if (record === undefined) {
-      break;
-    }
-    reverse.push(record);
-    revision = record.parentRevision;
-  }
+  const reverse = await retainedChain(
+    history,
+    completes.map((record) => ({ ...record, revision: record.newRevision })),
+    head.revision,
+  );
   return reverse.toReversed();
 };
 
@@ -107,6 +97,9 @@ export const requireHeadRevision = async (history: HistoryBlobStore): Promise<st
   const head = await readJson(history, historyKey.head, parseHead);
   if (head === undefined) {
     throw new SupabashError('REVISION_NOT_FOUND', 'Workspace has no committed revision yet.');
+  }
+  if ((await readJson(history, historyKey.revision(head.revision), parseRevision)) === undefined) {
+    throw new SupabashError('HISTORY_CORRUPTION', 'Current revision manifest is missing.');
   }
   return head.revision;
 };

@@ -46,6 +46,7 @@ export const decodeSnapshot = (value: unknown): PinnedSnapshot => {
   const revision = nullableString(record, 'headRevision', 'head_revision', 'revision');
   const committedAt = optionalString(record, 'committedAt', 'committed_at');
   const transactionId = optionalString(record, 'transactionId', 'transaction_id');
+  const redactionEpoch = optionalString(record, 'redactionEpoch');
   const documents = array(record, 'documents').map((entry) => decodeDocument(entry));
   if (new Set(documents.map(({ path }) => path)).size !== documents.length) {
     throw corrupt('Postgres snapshot contains duplicate document paths.');
@@ -55,6 +56,7 @@ export const decodeSnapshot = (value: unknown): PinnedSnapshot => {
     revision,
     ...(committedAt !== undefined && { committedAt: date(committedAt, 'snapshot committedAt') }),
     ...(transactionId !== undefined && { transactionId }),
+    ...(redactionEpoch !== undefined && { redactionEpoch }),
   };
 };
 
@@ -63,6 +65,7 @@ export const decodeManifest = (value: unknown): PinnedSnapshot => {
   const revision = nullableString(record, 'headRevision');
   const committedAt = optionalString(record, 'committedAt');
   const transactionId = optionalString(record, 'transactionId');
+  const redactionEpoch = optionalString(record, 'redactionEpoch');
   const documents = array(record, 'documents').map((entry) => decodeDocumentEntry(entry));
   if (
     new Set(documents.map(({ path }) => path)).size !== documents.length ||
@@ -75,6 +78,7 @@ export const decodeManifest = (value: unknown): PinnedSnapshot => {
     revision,
     ...(committedAt !== undefined && { committedAt: date(committedAt, 'manifest committedAt') }),
     ...(transactionId !== undefined && { transactionId }),
+    ...(redactionEpoch !== undefined && { redactionEpoch }),
   };
 };
 

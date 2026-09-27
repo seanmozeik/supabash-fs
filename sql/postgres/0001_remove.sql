@@ -1,6 +1,7 @@
 \set ON_ERROR_STOP on
 
 begin;
+drop function if exists public.supabash_commit(uuid, uuid, jsonb, jsonb, text, text, uuid, text, text, text, jsonb, uuid, text, bigint);
 drop function if exists public.supabash_redact(uuid, text[], text[], uuid, boolean, text, text[], boolean, text);
 drop function if exists public.supabash_restore_floor(uuid, text);
 drop function if exists public.supabash_history(uuid, text, integer, text, text);

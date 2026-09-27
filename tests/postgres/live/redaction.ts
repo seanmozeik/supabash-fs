@@ -1,4 +1,5 @@
 import { assert, expectCode, type LiveContext } from './context.ts';
+import { proveRepeatedRedaction, proveUnreferencedBody } from './redaction-cases.ts';
 
 export const proveRedaction = async (context: LiveContext, accessToken: string): Promise<void> => {
   const workspaceId = await context.createWorkspace(accessToken);
@@ -16,6 +17,9 @@ export const proveRedaction = async (context: LiveContext, accessToken: string):
   const pin = await workspace.checkpoint();
   await workspace.fs.writeFile('/memory.md', 'safe replacement');
   const second = await workspace.commit();
+  const workerA = await context.open(accessToken, workspaceId);
+  const cached = await workerA.fs.readFile('/shared.md');
+  await workerA.fs.writeFile('/cached-copy.md', cached);
   const pendingRestore = await context.open(accessToken, workspaceId);
   await pendingRestore.restore(first.revision);
   await expectCode(
@@ -39,6 +43,11 @@ export const proveRedaction = async (context: LiveContext, accessToken: string):
   assert(dryRunRevision.entries.length === 2, 'Dry run changed history.');
   assert((await workspace.restoreFloor()) === null, 'Dry run created a fence.');
   const applied = await workspace.redact(options);
+  await expectCode(
+    workerA.commit(),
+    'REDACTION_INVALIDATED',
+    'An ordinary commit from a worker opened before redaction was accepted.',
+  );
   assert(
     JSON.stringify(dry.bodies) === JSON.stringify(applied.bodies) && dry.bytes === applied.bytes,
     'Dry run disagreed with shared interval application.',
@@ -97,6 +106,8 @@ export const proveRedaction = async (context: LiveContext, accessToken: string):
   await workspace.purge({ maxRevisions: 0 });
   assert((await workspace.restoreFloor()) === third.revision, 'Purge removed a redaction fence.');
   await proveMetadataOnly(context, accessToken);
+  await proveRepeatedRedaction(context, accessToken);
+  await proveUnreferencedBody(context, accessToken);
   context.record(
     'redaction dry run, dedupe, metadata, direct reads, restore fence and retention floor',
   );

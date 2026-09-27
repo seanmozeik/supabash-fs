@@ -2,21 +2,81 @@ begin;
 lock table supabash.workspaces in access exclusive mode;
 grant create on schema public to supabash_api;
 
--- Preserve causal order for legacy manifests without changing their storage format.
+-- Preserve a unique order across purge gaps. Timestamps order disconnected
+-- components; parent links order timestamp ties. UUIDs only stabilize an already
+-- validated order, never resolve missing causal evidence.
 alter table supabash.workspace_revisions add column if not exists legacy_sequence bigint;
-with recursive chain as (
-  select r.workspace_id, r.revision_id, r.parent_revision, 1::bigint as depth
-  from supabash.workspace_revisions r
-  where not exists (select 1 from supabash.workspace_revisions child
-    where child.workspace_id = r.workspace_id and child.parent_revision = r.revision_id)
-  union all
-  select r.workspace_id, r.revision_id, r.parent_revision, c.depth + 1
-  from chain c join supabash.workspace_revisions r
-    on r.workspace_id = c.workspace_id and r.revision_id = c.parent_revision
-)
-update supabash.workspace_revisions r set legacy_sequence = -c.depth
-from chain c where r.workspace_id = c.workspace_id and r.revision_id = c.revision_id
-  and r.storage_sequence is null and r.legacy_sequence is null;
+alter table supabash.workspaces add column if not exists redaction_epoch bigint not null default 0
+  check (redaction_epoch >= 0);
+
+do $ordering$
+declare v_workspace uuid;
+begin
+  for v_workspace in select distinct workspace_id from supabash.workspace_revisions
+    where storage_sequence is null and legacy_sequence is null
+  loop
+    -- Never renumber published positions: fences must survive later purges.
+    if exists (select 1 from supabash.workspace_revisions where workspace_id = v_workspace
+      and storage_sequence is null and legacy_sequence is not null) then
+      raise exception 'SUPABASH_LEGACY_ORDER_AMBIGUOUS workspace %: partially assigned order', v_workspace;
+    end if;
+    if exists (
+      select 1 from supabash.workspace_revisions child
+      join supabash.workspace_revisions parent on parent.workspace_id = child.workspace_id
+        and parent.revision_id = child.parent_revision
+      where child.workspace_id = v_workspace and (
+        parent.storage_sequence is null and child.storage_sequence is null
+          and parent.committed_at > child.committed_at
+        or parent.storage_sequence is not null and (child.storage_sequence is null
+          or parent.storage_sequence >= child.storage_sequence))
+    ) or exists (
+      select 1 from supabash.workspace_revisions where workspace_id = v_workspace
+        and parent_revision is not null group by parent_revision having count(*) > 1
+    ) then
+      raise exception 'SUPABASH_LEGACY_ORDER_AMBIGUOUS workspace %: conflicting order evidence', v_workspace;
+    end if;
+
+    -- Only timestamp ties require ancestor expansion. Expanding the entire
+    -- retained history would be quadratic even when timestamps are all unique.
+    create temporary table supabash_legacy_ancestry on commit drop as
+    with recursive ancestry as (
+      select child.revision_id as descendant, parent.revision_id as ancestor, child.committed_at
+      from supabash.workspace_revisions child
+      join supabash.workspace_revisions parent on parent.workspace_id = child.workspace_id
+        and parent.revision_id = child.parent_revision and parent.committed_at = child.committed_at
+      where child.workspace_id = v_workspace and child.storage_sequence is null
+      union
+      select a.descendant, parent.revision_id, a.committed_at from ancestry a
+      join supabash.workspace_revisions r on r.workspace_id = v_workspace and r.revision_id = a.ancestor
+      join supabash.workspace_revisions parent on parent.workspace_id = r.workspace_id
+        and parent.revision_id = r.parent_revision and parent.committed_at = a.committed_at
+    ) select descendant, ancestor from ancestry;
+    if exists (select 1 from supabash_legacy_ancestry where descendant = ancestor)
+      or exists (
+        select 1 from supabash.workspace_revisions a
+        join supabash.workspace_revisions b on a.workspace_id = b.workspace_id
+          and a.committed_at = b.committed_at and a.revision_id < b.revision_id
+        where a.workspace_id = v_workspace and a.storage_sequence is null and b.storage_sequence is null
+          and not exists (select 1 from supabash_legacy_ancestry p
+            where (p.descendant = a.revision_id and p.ancestor = b.revision_id)
+              or (p.descendant = b.revision_id and p.ancestor = a.revision_id))
+      ) then
+      raise exception 'SUPABASH_LEGACY_ORDER_AMBIGUOUS workspace %: disconnected timestamp ties or cycle', v_workspace;
+    end if;
+    with ordered as (
+      select r.revision_id, row_number() over (order by r.committed_at,
+        (select count(*) from supabash_legacy_ancestry a where a.descendant = r.revision_id),
+        r.revision_id) - count(*) over () - 1 as position
+      from supabash.workspace_revisions r where r.workspace_id = v_workspace and r.storage_sequence is null
+    )
+    update supabash.workspace_revisions r set legacy_sequence = o.position
+    from ordered o where r.workspace_id = v_workspace and r.revision_id = o.revision_id;
+    drop table supabash_legacy_ancestry;
+  end loop;
+end
+$ordering$;
+create unique index if not exists workspace_revision_position
+  on supabash.workspace_revisions(workspace_id, (coalesce(storage_sequence, legacy_sequence)));
 
 create table if not exists supabash.redactions (
   workspace_id uuid not null references supabash.workspaces(id) on delete cascade,
@@ -43,6 +103,21 @@ grant select, insert on supabash.redactions to supabash_api;
 -- Only receipt context and the JSON change payload need new UPDATE rights.
 grant update (metadata, cause) on supabash.workspace_revisions to supabash_api;
 grant update (change) on supabash.revision_changes to supabash_api;
+
+-- User metadata may contain redacted=true. Only this deliberately non-renderable
+-- tuple is internal: valid frontmatter has a nonempty rendered content hash/size.
+create or replace function supabash.is_redacted_document(
+  p_body_hash text, p_metadata jsonb, p_content_hash text, p_content_byte_size bigint
+)
+returns boolean language sql immutable security invoker
+set search_path = pg_catalog, supabash
+as $function$
+  select coalesce(p_body_hash = supabash.sha256_text('')
+    and p_metadata = '{"redacted":true}'::jsonb
+    and p_content_hash = p_body_hash and p_content_byte_size = 0, false);
+$function$;
+revoke all on function supabash.is_redacted_document(text, jsonb, text, bigint) from public, anon, authenticated, service_role;
+grant execute on function supabash.is_redacted_document(text, jsonb, text, bigint) to supabash_api;
 
 create or replace function supabash.assert_restore_allowed(p_workspace_id uuid, p_revision_id uuid)
 returns void language plpgsql stable security invoker
@@ -254,6 +329,95 @@ begin
 end
 $function$;
 
+create or replace function public.supabash_load_workspace(
+  p_workspace_id uuid,
+  p_delegated_grant text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, supabash
+set row_security = on
+as $function$
+declare
+  v_result jsonb;
+begin
+  perform * from supabash.authorize_workspace(p_workspace_id, array['read'], p_delegated_grant);
+
+  select jsonb_build_object(
+    'workspaceId', w.id,
+    'headRevision', w.head_revision,
+    'redactionEpoch', w.redaction_epoch::text,
+    'transactionId', r.transaction_id,
+    'committedAt', r.committed_at,
+    'documents', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'path', e.path,
+        'body', b.body,
+        'bodyHash', e.body_hash,
+        'bodyByteSize', e.byte_size,
+        'metadata', e.metadata,
+        'contentHash', e.content_hash,
+        'byteSize', e.content_byte_size
+      ) order by e.path)
+      from supabash.current_documents e
+      join supabash.bodies b
+        on b.workspace_id = e.workspace_id and b.body_hash = e.body_hash
+      where e.workspace_id = w.id
+    ), '[]'::jsonb)
+  ) into v_result
+  from supabash.workspaces w
+  left join supabash.workspace_revisions r
+    on r.workspace_id = w.id and r.revision_id = w.head_revision
+  where w.id = p_workspace_id;
+
+  if v_result is null then
+    raise exception using errcode = '42501', message = 'SUPABASH_WORKSPACE_DENIED';
+  end if;
+  return jsonb_strip_nulls(v_result);
+end
+$function$;
+
+create or replace function public.supabash_load_manifest(
+  p_workspace_id uuid,
+  p_delegated_grant text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, supabash
+set row_security = on
+as $function$
+declare
+  v_result jsonb;
+begin
+  perform * from supabash.authorize_workspace(p_workspace_id, array['read'], p_delegated_grant);
+  select jsonb_build_object(
+    'workspaceId', w.id,
+    'headRevision', w.head_revision,
+    'redactionEpoch', w.redaction_epoch::text,
+    'transactionId', r.transaction_id,
+    'committedAt', r.committed_at,
+    'documents', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'path', e.path, 'bodyHash', e.body_hash, 'bodyByteSize', e.byte_size,
+        'metadata', e.metadata, 'contentHash', e.content_hash, 'byteSize', e.content_byte_size
+      ) order by e.path)
+      from supabash.current_documents e
+      where e.workspace_id = w.id
+    ), '[]'::jsonb)
+  ) into v_result
+  from supabash.workspaces w
+  left join supabash.workspace_revisions r
+    on r.workspace_id = w.id and r.revision_id = w.head_revision
+  where w.id = p_workspace_id;
+  if v_result is null then
+    raise exception using errcode = '42501', message = 'SUPABASH_WORKSPACE_DENIED';
+  end if;
+  return v_result;
+end
+$function$;
+
 create or replace function supabash.snapshot_at(p_workspace_id uuid, p_revision_id uuid)
 returns jsonb
 language sql
@@ -269,7 +433,7 @@ as $function$
     'documents', coalesce((
       select jsonb_agg(jsonb_build_object(
         'path', e.path,
-        'kind', case when e.metadata @> '{"redacted":true}' then 'unavailable' else 'file' end,
+        'kind', case when supabash.is_redacted_document(e.body_hash, e.metadata, e.content_hash, e.content_byte_size) then 'unavailable' else 'file' end,
         'body', b.body,
         'bodyHash', e.body_hash,
         'bodyByteSize', e.byte_size,
@@ -313,6 +477,8 @@ begin
 end
 $function$;
 
+drop function if exists public.supabash_commit(uuid, uuid, jsonb, jsonb, text, text, uuid, text, text, text, jsonb, uuid, text);
+
 create or replace function public.supabash_commit(
   p_workspace_id uuid,
   p_base_revision uuid,
@@ -326,7 +492,8 @@ create or replace function public.supabash_commit(
   p_cause text default null,
   p_metadata jsonb default '{}'::jsonb,
   p_source_revision uuid default null,
-  p_delegated_grant text default null
+  p_delegated_grant text default null,
+  p_redaction_epoch bigint default null
 )
 returns jsonb
 language plpgsql
@@ -430,6 +597,10 @@ begin
     perform supabash.assert_restore_allowed(p_workspace_id, p_source_revision);
   end if;
 
+  if p_redaction_epoch is distinct from (select redaction_epoch from supabash.workspaces where id = p_workspace_id) then
+    raise exception using errcode = '22023', message = 'SUPABASH_REDACTION_INVALIDATED';
+  end if;
+
   if v_auth.delegated then
     p_actor := 'delegated:' || v_auth.actor_subject;
     p_correlation_id := v_auth.correlation_id;
@@ -438,6 +609,7 @@ begin
   v_request_hash := supabash.sha256_text(jsonb_build_object(
     'workspaceId', p_workspace_id,
     'baseRevision', p_base_revision,
+    'redactionEpoch', p_redaction_epoch,
     'changes', p_changes,
     'receiptChanges', p_receipt_changes,
     'actor', p_actor,
@@ -692,7 +864,8 @@ begin
   if v_result is null then
     raise exception using errcode = '22023', message = 'SUPABASH_REVISION_NOT_FOUND';
   end if;
-  if v_result->'metadata' @> '{"redacted":true}' then
+  if supabash.is_redacted_document(v_result->>'bodyHash', v_result->'metadata',
+    v_result->>'contentHash', (v_result->>'byteSize')::bigint) then
     raise exception using errcode = '22023', message = 'SUPABASH_REDACTED';
   end if;
   return v_result;
@@ -782,7 +955,7 @@ begin
   ), before_documents as (
     select
       path,
-      metadata @> '{"redacted":true}' as redacted,
+      supabash.is_redacted_document("bodyHash", metadata, "contentHash", "byteSize") as redacted,
       supabash.render_document(body, metadata) as body,
       "contentHash" as "bodyHash",
       "byteSize"
@@ -796,7 +969,7 @@ begin
   ), after_documents as (
     select
       path,
-      metadata @> '{"redacted":true}' as redacted,
+      supabash.is_redacted_document("bodyHash", metadata, "contentHash", "byteSize") as redacted,
       supabash.render_document(body, metadata) as body,
       "contentHash" as "bodyHash",
       "byteSize"
@@ -1135,7 +1308,8 @@ begin
 
   select coalesce(array_agg(distinct r.revision_id), '{}'),
     coalesce(array_agg(distinct e.path) filter (where e.path is not null), '{}'),
-    coalesce(array_agg(distinct e.body_hash) filter (where e.body_hash is not null), '{}')
+    coalesce(array_agg(distinct e.body_hash) filter (where e.body_hash is not null
+      and not supabash.is_redacted_document(e.body_hash, e.metadata, e.content_hash, e.content_byte_size)), '{}')
   into v_revisions, v_paths, v_hashes
   from supabash.workspace_revisions r
   left join lateral supabash.entries_at(p_workspace_id, r.revision_id) e
@@ -1145,8 +1319,17 @@ begin
     and (e.path is not null or
       (coalesce(cardinality(p_paths), 0) + coalesce(cardinality(p_body_hashes), 0) = 0));
 
+  -- Explicit hashes include bodies left unreferenced by an upsert overwritten
+  -- later in the same commit, without ever crossing the workspace boundary.
+  select coalesce(array_agg(distinct h), '{}') into v_hashes from (
+    select unnest(v_hashes) as h
+    union select body_hash from supabash.bodies
+      where workspace_id = p_workspace_id and body_hash = any(p_body_hashes)
+  ) candidates;
+
   if exists (select 1 from supabash.current_documents d
     where d.workspace_id = p_workspace_id and d.body_hash = any(v_hashes)
+      and not supabash.is_redacted_document(d.body_hash, d.metadata, d.content_hash, d.content_byte_size)
       and not coalesce(d.path = any(p_paths), false)) then
     raise exception using errcode = '22023', message = 'SUPABASH_REDACTION_CURRENT_BODY';
   end if;
@@ -1175,6 +1358,7 @@ begin
           or not coalesce(e.path = any(p_paths) or e.body_hash = any(p_body_hashes), false)));
 
   if not coalesce(p_dry_run, false) then
+    update supabash.workspaces set redaction_epoch = redaction_epoch + 1 where id = p_workspace_id;
     insert into supabash.bodies(workspace_id, body_hash, body, byte_size)
     values(p_workspace_id, v_tombstone, '', 0) on conflict do nothing;
 
@@ -1246,6 +1430,10 @@ grant execute on function public.supabash_history(uuid, text, integer, text, tex
 grant execute on function public.supabash_purge(uuid, integer, bigint, boolean, text, uuid) to authenticated, service_role;
 alter function public.supabash_redact(uuid, text[], text[], uuid, boolean, text, text[], boolean, text) set lock_timeout = '1s';
 alter function public.supabash_purge(uuid, integer, bigint, boolean, text, uuid) set lock_timeout = '1s';
+alter function public.supabash_commit(uuid, uuid, jsonb, jsonb, text, text, uuid, text, text, text, jsonb, uuid, text, bigint) owner to supabash_api;
+revoke all on function public.supabash_commit(uuid, uuid, jsonb, jsonb, text, text, uuid, text, text, text, jsonb, uuid, text, bigint) from public, anon;
+grant execute on function public.supabash_commit(uuid, uuid, jsonb, jsonb, text, text, uuid, text, text, text, jsonb, uuid, text, bigint) to authenticated, service_role;
+alter function public.supabash_commit(uuid, uuid, jsonb, jsonb, text, text, uuid, text, text, text, jsonb, uuid, text, bigint) set lock_timeout = '1s';
 revoke create on schema public from supabash_api;
 notify pgrst, 'reload schema';
 commit;

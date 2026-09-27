@@ -30,6 +30,7 @@ export interface BackendDocument extends DocumentEntry {
 }
 
 export interface PinnedSnapshot {
+  readonly redactionEpoch?: string;
   readonly committedAt?: Date;
   readonly documents: readonly (DocumentEntry | BackendDocument)[];
   readonly loadDocument?: (revision: string, path: string) => Promise<BackendDocument>;
@@ -66,6 +67,7 @@ export interface BackendCommitInput {
   readonly changes: readonly WorkspaceChange[];
   readonly context: CommitContext;
   readonly expectedRevision: string | null;
+  readonly expectedRedactionEpoch: string | null;
   readonly fingerprint: string;
   readonly mutations: readonly BackendMutation[];
   readonly restoreSourceRevision?: string;

@@ -1,5 +1,6 @@
 import { SupabashError } from '../api/errors.js';
 import type { PurgeOptions, PurgeReceipt } from '../api/history.js';
+import { preserveAncestry, retainedChain } from './ancestry.js';
 import type { HistoryBlobStore } from './blob-store.js';
 import { readJson } from './json-io.js';
 import { HISTORY_ROOT, historyKey } from './keys.js';
@@ -15,23 +16,23 @@ export const purgeHistory = async (
   const { maxRevisions } = normalized;
   const head = await readJson(history, historyKey.head, parseHead);
   const records = await loadRevisions(history);
+  const chain = await retainedChain(history, records, head?.revision);
   const pinned = await pinnedRevisions(history, head);
   if (normalized.keepAfterRevision !== undefined) {
-    const chain = keepRecent(records, head, Number.MAX_SAFE_INTEGER);
-    if (!chain.has(normalized.keepAfterRevision)) {
+    if (!chain.some((record) => record.revision === normalized.keepAfterRevision)) {
       throw new SupabashError(
         'REVISION_NOT_FOUND',
         'Retention floor must be on the retained head chain.',
       );
     }
-    for (const revision of chain) {
-      pinned.add(revision);
-      if (revision === normalized.keepAfterRevision) {
+    for (const record of chain) {
+      pinned.add(record.revision);
+      if (record.revision === normalized.keepAfterRevision) {
         break;
       }
     }
   }
-  const keptByCount = keepRecent(records, head, maxRevisions);
+  const keptByCount = new Set(chain.slice(0, maxRevisions).map((record) => record.revision));
   const cutoff = normalized.maxAgeMs === undefined ? undefined : Date.now() - normalized.maxAgeMs;
   const removable = records.filter((record) => {
     if (pinned.has(record.revision)) {
@@ -70,6 +71,7 @@ export const purgeHistory = async (
   const objects = [...new Set([...unusedObjects, ...transactionKeys, ...aborted])].toSorted();
   const bytes = await byteSize(history, objects);
   if (normalized.dryRun !== true && objects.length > 0) {
+    await preserveAncestry(history, removable);
     await history.remove(objects);
   }
   return { bytes, dryRun: normalized.dryRun === true, objects };
@@ -131,28 +133,6 @@ const pinnedRevisions = async (
     }
   }
   return pinned;
-};
-
-const keepRecent = (
-  records: readonly RevisionRecord[],
-  head: HeadRecord | undefined,
-  maxRevisions: number,
-): Set<string> => {
-  const byRevision = new Map<string, RevisionRecord>();
-  for (const record of records) {
-    byRevision.set(record.revision, record);
-  }
-  const kept = new Set<string>();
-  let current = head?.revision;
-  while (typeof current === 'string' && kept.size < maxRevisions) {
-    if (kept.has(current)) {
-      return kept;
-    }
-    kept.add(current);
-    const parent = byRevision.get(current)?.parentRevision;
-    current = typeof parent === 'string' ? parent : undefined;
-  }
-  return kept;
 };
 
 const hashesOf = (record: { entries: readonly { contentHash?: string }[] }): readonly string[] =>

@@ -19,9 +19,6 @@ export const planRestore = async (
   if (target === undefined) {
     throw new SupabashError('REVISION_NOT_FOUND', 'Restore revision does not exist.');
   }
-  if ((await readJson(history, historyKey.revision(current), parseRevision)) === undefined) {
-    throw new SupabashError('HISTORY_CORRUPTION', 'Current revision manifest is missing.');
-  }
   const diff = await diffRevisions(history, { from: { revision: current }, to: { revision } });
   await fs.stageRemoteTree(target.entries.map(remoteFromRevision), (entry) =>
     downloadRevision(history, entry),

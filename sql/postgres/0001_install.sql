@@ -296,6 +296,7 @@ create table supabash.workspaces (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null,
   head_revision uuid,
+  redaction_epoch bigint not null default 0 check (redaction_epoch >= 0),
   created_at timestamptz not null default clock_timestamp(),
   updated_at timestamptz not null default clock_timestamp(),
   unique (id, owner_id)
@@ -1003,6 +1004,21 @@ begin
 end
 $function$;
 
+-- User metadata may contain redacted=true. Only this deliberately non-renderable
+-- tuple is internal: valid frontmatter has a nonempty rendered content hash/size.
+create or replace function supabash.is_redacted_document(
+  p_body_hash text, p_metadata jsonb, p_content_hash text, p_content_byte_size bigint
+)
+returns boolean language sql immutable security invoker
+set search_path = pg_catalog, supabash
+as $function$
+  select coalesce(p_body_hash = supabash.sha256_text('')
+    and p_metadata = '{"redacted":true}'::jsonb
+    and p_content_hash = p_body_hash and p_content_byte_size = 0, false);
+$function$;
+revoke all on function supabash.is_redacted_document(text, jsonb, text, bigint) from public, anon, authenticated, service_role;
+grant execute on function supabash.is_redacted_document(text, jsonb, text, bigint) to supabash_api;
+
 create function public.supabash_load_workspace(
   p_workspace_id uuid,
   p_delegated_grant text default null
@@ -1021,6 +1037,7 @@ begin
   select jsonb_build_object(
     'workspaceId', w.id,
     'headRevision', w.head_revision,
+    'redactionEpoch', w.redaction_epoch::text,
     'transactionId', r.transaction_id,
     'committedAt', r.committed_at,
     'documents', coalesce((

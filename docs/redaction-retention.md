@@ -62,7 +62,10 @@ const applied = await workspace.redact(options);
 ```
 
 Non-current matching entries point to the workspace's empty-body tombstone with
-`metadata.redacted = true`. The redacted marker is reserved for this purpose.
+`metadata = { redacted: true }`, empty body/content hashes and zero rendered size.
+Only that complete, non-renderable tuple is a tombstone. Ordinary user frontmatter
+`redacted: true` remains valid and readable: the document validator always computes
+a nonempty rendered frontmatter size/hash, so user writes cannot forge this tuple.
 Intervals shared with retained revisions are split at the boundary. Legacy
 manifests are rewritten in place. Document metadata on tombstoned entries is
 replaced too, because frontmatter can contain forgotten text.
@@ -75,7 +78,10 @@ any path not explicitly included in `paths`, redaction fails with
 `REDACTION_CURRENT_BODY`. Include that path only when retaining its current
 content is intentional, or edit/delete it first. A path-only redaction does not
 promise workspace-wide erasure of copies at other paths. Use body hashes to
-select all historical copies of known stored bodies.
+select all historical copies of known stored bodies. Explicit hashes also select
+workspace-scoped unreferenced body rows, including bodies overwritten within one
+SQL commit. Existing tombstones are excluded from original-body collection, so
+repeated path redactions remain safe beside empty and frontmatter-only files.
 
 `metadataKeys` removes top-level revision metadata keys from selected revisions.
 When no path/hash selectors are supplied, it applies to all revisions before the
@@ -85,8 +91,9 @@ outside this operation's historical range. If it contains sensitive metadata,
 commit a clean new revision, then scrub the older revision. `reason` is audit
 text: do not put forgotten content in it.
 
-Dry runs execute the same mutation and FK checks in a rolled-back subtransaction;
-they leave no body, manifest, metadata, fence, or audit changes. Their generated
+Dry runs calculate the same selected revisions and post-redaction body references
+under the workspace lock without writing; they leave no body, manifest, metadata,
+fence, epoch, or audit changes and can run in a read-only transaction. Their generated
 `redactionId` is a preview identifier, not an applied event. A subsequent apply
 can differ if another transaction changes the workspace. Applied requests each
 record an event; repeating a request is safe but does not reuse an event ID.
@@ -115,7 +122,41 @@ The fence is checked again under the workspace lock when committing a restore
 with `p_source_revision`, preventing a restore staged before redaction from being
 committed afterward. Custom restore implementations must also submit their source
 revision at commit; arbitrary writes containing previously read text cannot be
-recognized as restores automatically.
+recognized as restores automatically. Every commit also carries the workspace's
+opened redaction epoch, whether or not it declares a restore source. SQL checks it
+under the same lock, before idempotent replay or any writes. A missing or stale epoch
+fails with `SUPABASH_REDACTION_INVALIDATED`, mapped to
+`SupabashError.code === 'REDACTION_INVALIDATED'`. A declared restore that crosses the
+path fence still fails with `RESTORE_CROSSES_REDACTION`.
+
+### Host revocation protocol
+
+A successful non-dry-run redaction increments `workspaces.redaction_epoch` in the
+same transaction, including metadata-only redactions and repeated requests. The
+redacting `Workspace` discards **all staged changes**, pending commit/restore state,
+cached filesystem bodies, and its committed snapshot, then loads the current tree
+and new epoch. It can continue committing after that reload. Commit the intended
+forget edits before redacting. Dry runs leave the instance untouched.
+
+On `REDACTION_INVALIDATED`, the host cancels work based on the old workspace,
+reopens it, rebuilds the operation from current permitted inputs, and retries.
+Do not copy the old staged changes, conversation memory, or cached bodies into the
+new instance. A failed reload or uncertain redaction outcome clears the redacting
+instance and blocks its commits; reopen it, or retry the redaction to refresh it.
+Retain the pending forget request until its outcome is established. Retries can
+record another audit event and advance the epoch again.
+
+Before acknowledging forgetting, cancel affected workers and retire **every**
+previously opened instance of that workspace, its returned `committedSnapshot()`
+objects and `readRevision()` views, and any host filesystem/session holding a
+shared mount made from those objects. Reopen the source workspace and rebuild
+those mounts and sessions from a fresh permitted snapshot. Detached mounted bodies
+and already returned strings are local copies: they receive no invalidation signal
+and cached reads can still return them. Historical lazy SQL loads of tombstoned
+entries fail with `REDACTED`; this does not revalidate a mounted body already cached
+in memory. The epoch prevents stale commits back to the redacted workspace, not
+copies into another workspace. Host cancellation/retirement is therefore required
+for the complete forget protocol.
 
 All mutation work uses the same workspace advisory lock as commit and purge.
 Authorization precedes workspace reads, and RLS remains forced under the
@@ -177,8 +218,25 @@ existing grant argument. `supabash_history` appends
 `p_cursor_missing text default 'error'` after its existing grant argument. The old
 signatures are replaced, avoiding ambiguous PostgREST overloads; existing calls
 can omit the new arguments. Snapshot, diff, load, capability exchange, and commit
-functions are replaced with compatible signatures. The migration adds
-`supabash.redactions` and legacy revision ordering metadata.
+functions are replaced. **Breaking SQL change:** `supabash_commit` appends
+`p_redaction_epoch bigint default null` after its existing grant argument. The
+argument must be supplied even for ordinary commits; omitted/null epochs fail
+closed. Workspace and manifest RPCs return `redactionEpoch` as a decimal string,
+which callers must preserve and send without rounding. The TypeScript workspace
+does this automatically. Apply all four installation scripts before serving traffic.
+The migration adds `supabash.redactions`, `workspaces.redaction_epoch`, and legacy
+revision ordering metadata. New private helpers retain restricted execution grants
+and all workspace data remains behind forced RLS.
+
+Legacy ordering uses creation timestamps across purge gaps and parent links to
+resolve timestamp ties, with storage sequence ordering for modern revisions.
+The migration validates parent links and timestamp consistency and gives every
+retained revision a unique position. Disconnected timestamp ties, cycles,
+branching, inconsistent chronology, or partially assigned positions abort the
+transaction with `SUPABASH_LEGACY_ORDER_AMBIGUOUS workspace <uuid>`. Resolve the
+workspace's ordering from authoritative evidence before retrying; the migration
+does not guess from UUIDs. Reruns preserve assigned positions, including after purge,
+so previously recorded fences do not move.
 
 The live suite applies the upgrade twice to populated legacy/versioned data,
 checks preservation and redaction, and removes it afterward. It then installs a

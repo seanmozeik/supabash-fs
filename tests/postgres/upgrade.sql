@@ -7,29 +7,64 @@ create temporary table upgrade_fixture (workspace_id uuid, legacy_revision uuid,
 insert into upgrade_fixture(workspace_id)
 select (public.supabash_create_workspace()->>'workspaceId')::uuid;
 
-create function pg_temp.write_fixture(p_path text, p_body text) returns uuid
+create function pg_temp.write_fixture(p_path text, p_body text,
+  p_workspace_id uuid default null, p_metadata jsonb default '{}') returns uuid
 language plpgsql as $fn$
 declare
-  w uuid := (select workspace_id from upgrade_fixture);
+  w uuid := coalesce(p_workspace_id, (select workspace_id from upgrade_fixture));
   parent uuid := (select head_revision from supabash.workspaces where id = w);
   hash text := supabash.sha256_text(p_body);
+  content text := supabash.render_document(p_body, p_metadata);
+  rendered_hash text := supabash.sha256_text(content);
   old_hash text;
   old_size bigint;
   result jsonb;
+  epoch_argument text := '';
 begin
   select content_hash, content_byte_size into old_hash, old_size
   from supabash.current_documents where workspace_id = w and path = p_path;
-  result := public.supabash_commit(w, parent,
+  if to_regprocedure('public.supabash_commit(uuid,uuid,jsonb,jsonb,text,text,uuid,text,text,text,jsonb,uuid,text,bigint)') is not null then
+    epoch_argument := ', p_redaction_epoch => $9';
+  end if;
+  execute 'select public.supabash_commit($1,$2,$3,$4,$5,$6,$7,$8' || epoch_argument || ')'
+  into result using w, parent,
     jsonb_build_array(jsonb_build_object('kind', 'upsert', 'path', p_path,
       'body', p_body, 'bodyHash', hash, 'bodyByteSize', octet_length(p_body),
-      'metadata', '{}'::jsonb, 'contentHash', hash, 'byteSize', octet_length(p_body))),
+      'metadata', p_metadata, 'contentHash', rendered_hash, 'byteSize', octet_length(content))),
     jsonb_build_array(jsonb_strip_nulls(jsonb_build_object('kind', 'upsert', 'entryKind', 'file',
       'path', p_path, 'beforeHash', old_hash, 'beforeSize', old_size,
-      'afterHash', hash, 'afterSize', octet_length(p_body), 'contentHash', hash))),
-    'upgrade-test', 'upgrade-test', gen_random_uuid(), hash);
+      'afterHash', rendered_hash, 'afterSize', octet_length(content), 'contentHash', rendered_hash))),
+    'upgrade-test', 'upgrade-test', gen_random_uuid(), hash,
+    (select redaction_epoch from supabash.workspaces where id = w);
   return (result->'receipt'->>'revision')::uuid;
 end
 $fn$;
+
+-- Checkpoints retain three disconnected legacy components after a real purge.
+-- The final two revisions share a timestamp, with a parent link resolving it.
+create temporary table legacy_order_fixture(workspace_id uuid, ordinal integer, revision uuid);
+do $fixture$
+declare w uuid := (public.supabash_create_workspace()->>'workspaceId')::uuid;
+  r uuid;
+  i integer;
+begin
+  for i in 1..6 loop
+    if i = 6 then
+      r := pg_temp.write_fixture('/flag.md', '', w, '{"redacted":true}');
+    else
+      r := pg_temp.write_fixture('/memory.md', case when i < 5 then 'legacy secret' else 'safe' end, w);
+    end if;
+    insert into legacy_order_fixture values(w, i, r);
+    update supabash.workspace_revisions set committed_at = '2020-01-01'::timestamptz + least(i, 5) * interval '1 second'
+      where workspace_id = w and revision_id = r;
+    if i in (1, 3, 5) then perform public.supabash_checkpoint(w, 'legacy-' || i); end if;
+  end loop;
+  perform public.supabash_purge(w, 1);
+  if (select count(*) from supabash.workspace_revisions where workspace_id = w) <> 4 then
+    raise exception 'Legacy purge-gap fixture did not retain the expected checkpoints';
+  end if;
+end
+$fixture$;
 
 select pg_temp.write_fixture('/unchanged.md', 'unchanged');
 update upgrade_fixture set legacy_revision = pg_temp.write_fixture('/changed.md', 'before');
@@ -45,6 +80,72 @@ revoke update (change) on supabash.revision_changes from supabash_api;
 -- A populated 0.7.0 database; apply twice to prove upgrade idempotence.
 \ir ../../sql/postgres/0004_redact_retention.sql
 \ir ../../sql/postgres/0004_redact_retention.sql
+-- All consumers must use the same total order, including across purged parents.
+do $order$
+declare
+  w uuid := (select workspace_id from legacy_order_fixture limit 1);
+  first_revision uuid := (select revision from legacy_order_fixture where ordinal = 1);
+  floor_revision uuid := (select revision from legacy_order_fixture where ordinal = 3);
+  expected uuid[] := array(select revision from legacy_order_fixture where ordinal in (1,3,5,6) order by ordinal);
+  seen uuid[] := '{}';
+  page jsonb;
+  next_cursor text;
+  result jsonb;
+  doc jsonb;
+begin
+  loop
+    page := public.supabash_history(w, next_cursor, 1);
+    seen := seen || (page->'records'->0->>'revision')::uuid;
+    next_cursor := page->>'nextCursor';
+    exit when next_cursor is null;
+    if cardinality(seen) > 4 then raise exception 'History pagination cycled'; end if;
+  end loop;
+  if seen <> expected then raise exception 'Legacy pagination order mismatch: %', seen; end if;
+  if (select count(distinct legacy_sequence) from supabash.workspace_revisions where workspace_id = w) <> 4 then
+    raise exception 'Legacy positions are not unique';
+  end if;
+  doc := public.supabash_load_pinned_snapshot(w, expected[4]);
+  if doc->'documents'->0->>'kind' <> 'file' then raise exception 'User redacted=true metadata became a tombstone'; end if;
+  begin
+    perform * from supabash.decode_stored_document(jsonb_build_object(
+      'path', '/forged.md', 'body', '', 'bodyByteSize', 0,
+      'bodyHash', supabash.sha256_text(''), 'contentHash', supabash.sha256_text(''),
+      'byteSize', 0, 'metadata', '{"redacted":true}'::jsonb));
+    raise exception 'User input forged the internal tombstone tuple';
+  exception when invalid_parameter_value then
+    if sqlerrm <> 'SUPABASH_UNSUPPORTED_CONTENT' then raise; end if;
+  end;
+  doc := public.supabash_load_document(w, expected[4], '/flag.md');
+  if doc->'metadata' <> '{"redacted":true}'::jsonb then raise exception 'Upgrade lost user frontmatter'; end if;
+  delete from supabash.checkpoints where workspace_id = w;
+  result := public.supabash_purge(w, 0, p_dry_run => true, p_keep_after_revision => floor_revision);
+  if result->'objects' <> jsonb_build_array('revision:' || first_revision::text) then
+    raise exception 'Legacy retention floor used a different order: %', result;
+  end if;
+  result := public.supabash_redact(w, array['/memory.md'], p_before_revision => floor_revision);
+  if result->'revisions' <> jsonb_build_array(first_revision) then
+    raise exception 'Legacy redaction boundary used a different order: %', result;
+  end if;
+  perform public.supabash_load_revision(w, floor_revision);
+  begin
+    perform public.supabash_load_revision(w, first_revision);
+    raise exception 'Disconnected legacy revision crossed the redaction fence';
+  exception when invalid_parameter_value then
+    if sqlerrm <> 'SUPABASH_RESTORE_CROSSES_REDACTION' then raise; end if;
+  end;
+  begin
+    perform public.supabash_load_document(w, first_revision, '/memory.md');
+    raise exception 'Disconnected legacy body remained readable';
+  exception when invalid_parameter_value then
+    if sqlerrm <> 'SUPABASH_REDACTED' then raise; end if;
+  end;
+  -- A current user-created flag remains readable through new writes as well.
+  perform pg_temp.write_fixture('/flag.md', 'readable', w, '{"redacted":true}');
+  doc := public.supabash_load_document(w, (select head_revision from supabash.workspaces where id = w), '/flag.md');
+  if doc->>'body' <> 'readable' then raise exception 'New user frontmatter is unreadable'; end if;
+end
+$order$;
+
 -- Assert column grants, including denial on every unrelated revision column.
 do $acl$
 declare c record;

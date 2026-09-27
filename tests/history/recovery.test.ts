@@ -6,6 +6,20 @@ import { createStorageWorkspace } from '../../src/core/workspace.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
 describe('workspace history recovery', () => {
+  test('rejects a purged parent as the retention floor', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage());
+    await workspace.fs.writeFile('/memory.md', 'one');
+    await workspace.commit();
+    await workspace.fs.writeFile('/memory.md', 'two');
+    const second = await workspace.commit();
+    await workspace.fs.writeFile('/memory.md', 'three');
+    await workspace.commit();
+    await workspace.purge({ maxRevisions: 1 });
+    await expect(workspace.purge({ keepAfterRevision: second.revision })).rejects.toMatchObject({
+      code: 'REVISION_NOT_FOUND',
+    });
+  });
+
   test('protects a retention floor and resumes a purged cursor only when opted in', async () => {
     const workspace = await createStorageWorkspace(new MemoryStorage());
     await workspace.fs.writeFile('/memory.md', 'one');

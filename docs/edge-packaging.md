@@ -31,6 +31,16 @@ image support remains a dynamic chunk. The build checks JavaScript and declarati
 imports against local files and the three peers. Every `node:*` import fails
 the build, including `node:zlib`.
 
+Declaration checks also validate triple-slash `types` and `path` references and
+external module augmentations. Local references must resolve to bundled files;
+external references must name declared peers. A declaration-only adapter exposes
+Just Bash's browser DNS transport interfaces without its internal Node test
+helpers, which otherwise pull Undici's Node declarations into the browser bundle.
+The core packed-consumer check compiles declarations with `skipLibCheck: false`,
+no ambient type packages, and no `@types/node` installation. The optional AI SDK
+peer's own declarations use Node types, so its separate consumer retains them.
+All packed-consumer checks accept `--offline` for cache-only installation.
+
 Just Bash 3.4.2 publishes its browser implementation as a single prebundle, with
 no per-command JavaScript exports. tsdown can tree-shake exports and inline its
 remaining external libraries, but cannot fully eliminate individual command

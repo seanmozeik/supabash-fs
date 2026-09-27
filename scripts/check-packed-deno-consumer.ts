@@ -21,6 +21,7 @@ const repository = path.dirname(import.meta.dirname);
 const temporaryRoot = await mkdtemp(path.join(tmpdir(), 'supabash-deno-consumer-'));
 const packageDirectory = path.join(temporaryRoot, 'package');
 const consumerDirectory = path.join(temporaryRoot, 'consumer');
+const offline = process.argv.includes('--offline');
 
 try {
   await mkdir(packageDirectory);
@@ -86,15 +87,27 @@ void result;
 `,
     ),
   ]);
-  await run([process.execPath, 'install', '--no-progress'], consumerDirectory);
   await run(
-    ['deno', 'check', '--minimum-dependency-age=0', '--config', 'deno.json', 'smoke.ts'],
+    [process.execPath, 'install', '--no-progress', ...(offline ? ['--offline'] : [])],
+    consumerDirectory,
+  );
+  await run(
+    [
+      'deno',
+      'check',
+      ...(offline ? ['--cached-only'] : []),
+      '--minimum-dependency-age=0',
+      '--config',
+      'deno.json',
+      'smoke.ts',
+    ],
     consumerDirectory,
   );
   await run(
     [
       'deno',
       'run',
+      ...(offline ? ['--cached-only'] : []),
       '--minimum-dependency-age=0',
       '--allow-env=__MINIMATCH_TESTING_PLATFORM__,OPENAI_API_KEY,OPENAI_BASE_URL',
       '--allow-read',

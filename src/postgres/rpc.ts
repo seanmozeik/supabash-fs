@@ -128,7 +128,12 @@ export const postgresError = (error: PostgrestFailure): SupabashError => {
 };
 
 const redactionError = (error: PostgrestFailure, stable: string): SupabashError | undefined => {
-  for (const code of ['REDACTED', 'REDACTION_CURRENT_BODY', 'RESTORE_CROSSES_REDACTION'] as const) {
+  for (const code of [
+    'REDACTED',
+    'REDACTION_CURRENT_BODY',
+    'REDACTION_INVALIDATED',
+    'RESTORE_CROSSES_REDACTION',
+  ] as const) {
     if (stable.includes(`SUPABASH_${code}`)) {
       return new SupabashError(code, `Postgres rejected the operation: ${code}.`, { cause: error });
     }

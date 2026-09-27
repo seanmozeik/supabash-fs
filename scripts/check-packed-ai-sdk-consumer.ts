@@ -99,7 +99,15 @@ void tools;
       }),
     ),
   ]);
-  await run([process.execPath, 'install', '--no-progress'], consumerDirectory);
+  await run(
+    [
+      process.execPath,
+      'install',
+      '--no-progress',
+      ...(process.argv.includes('--offline') ? ['--offline'] : []),
+    ],
+    consumerDirectory,
+  );
   await run([process.execPath, 'run', 'typecheck'], consumerDirectory);
   await run([process.execPath, 'run', 'smoke'], consumerDirectory);
 } finally {

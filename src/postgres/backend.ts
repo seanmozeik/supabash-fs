@@ -110,6 +110,7 @@ class PostgresBackend implements WorkspaceBackend {
     const args = {
       p_actor: input.context.actor,
       p_base_revision: input.expectedRevision,
+      p_redaction_epoch: input.expectedRedactionEpoch,
       p_cause: input.context.cause ?? null,
       p_changes: input.mutations,
       p_correlation_id: input.context.correlationId,

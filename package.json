@@ -53,7 +53,7 @@
     "build": "bun run build:clean && bun run build:js",
     "build:clean": "bun ./scripts/clean-dist.ts",
     "build:js": "tsdown && bun ./scripts/check-edge-imports.ts",
-    "build:smoke": "bun ./scripts/check-built-package.mjs && bun ./scripts/check-built-ai-sdk.ts && node ./scripts/check-built-package.mjs && node ./scripts/check-built-ai-sdk.ts",
+    "build:smoke": "bun ./scripts/check-built-package.ts && bun ./scripts/check-built-ai-sdk.ts && node ./scripts/check-built-package.ts && node ./scripts/check-built-ai-sdk.ts",
     "build:types": "bun run build:js",
     "check:deno": "deno check --minimum-dependency-age=0 --sloppy-imports --config deno.check.json tests/deno/live-supabase.ts tests/deno/ai-sdk.ts tests/deno/postgres-live.ts tests/postgres/edge-smoke/index.ts",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run source:size",

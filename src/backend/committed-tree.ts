@@ -26,6 +26,7 @@ export const committedTree = (
       comparePaths(left.path, right.path),
     ),
     revision: receipt.revision,
+    ...(previous.redactionEpoch !== undefined && { redactionEpoch: previous.redactionEpoch }),
     transactionId: receipt.transactionId,
     ...(previous.loadDocument !== undefined && { loadDocument: previous.loadDocument }),
     ...(previous.loadSnapshot !== undefined && { loadSnapshot: previous.loadSnapshot }),

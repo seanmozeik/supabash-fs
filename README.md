@@ -41,8 +41,8 @@ Authorization is not command-string filtering. The real boundaries are the
 virtual filesystem, canonical path checks, the verified user or capability,
 and the backend authorization policy. The command policy is a damage limiter.
 
-The root export does not load `ai`, `@ai-sdk/openai`, or `bash-tool`. AI SDK
-tools live on `@seanmozeik/supabash-fs/ai-sdk`.
+The root export does not load `ai` or `@ai-sdk/openai`. AI SDK tools live on
+`@seanmozeik/supabash-fs/ai-sdk`.
 
 ## Install
 
@@ -1028,6 +1028,20 @@ bodies, and creates a SQL restore fence. It preserves current files and refuses
 uncovered current copies of selected bodies. `readRevision` throws `REDACTED`;
 restore throws `RESTORE_CROSSES_REDACTION` for targets before the fence. Delegates
 need the distinct `redact` operation. Dry runs are available through `dryRun: true`.
+
+Every Postgres commit checks the redaction epoch captured when its workspace opened.
+After another worker redacts, ordinary commits fail with `REDACTION_INVALIDATED`,
+even when the head has not changed. The host must cancel that worker, reopen the
+workspace, rebuild its operation from current permitted inputs, and retry. Retire
+old snapshots, historical views, and sessions with shared mounts; cached detached
+bodies are local copies and can still be read until the host replaces them.
+Historical lazy SQL loads of redacted bodies fail with `REDACTED`.
+
+A successful `redact()` discards the caller's staged changes and cached snapshot,
+then reloads the current tree and epoch so it can continue safely. Commit forget
+edits first. Uncertain outcomes clear and invalidate the caller until it reopens or
+successfully retries redaction. Raw SQL commits must send `p_redaction_epoch` from
+the opened manifest's `redactionEpoch` string; omitted epochs fail closed.
 
 Existing 0.7.0 databases apply the idempotent
 `sql/postgres/0004_redact_retention.sql` migration. See
