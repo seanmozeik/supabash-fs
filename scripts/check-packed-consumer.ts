@@ -45,8 +45,8 @@ try {
       JSON.stringify({
         dependencies: {
           '@seanmozeik/supabash-fs': `file:${tarball}`,
+          '@supabase/supabase-js': '2.116.0',
           '@types/node': '26.5.1',
-          'just-bash': '3.4.2',
           typescript: '7.0.2',
         },
         private: true,
@@ -76,7 +76,7 @@ if (!installSql.includes('create schema supabash')) throw new Error('Missing Pos
 } catch (error) {
   const message = String(error);
   if (message.includes('unexpectedly succeeded')) throw error;
-  if (!['ai', '@ai-sdk/openai', 'bash-tool'].some((peer) => message.includes(peer))) {
+  if (!['ai', '@ai-sdk/openai'].some((peer) => message.includes(peer))) {
     throw new Error('AI SDK import did not identify a missing optional peer.', { cause: error });
   }
 }

@@ -1,11 +1,17 @@
-import type { Tool } from 'ai';
-import { createBashTool, type CommandResult } from 'bash-tool';
+import { tool, type Tool } from 'ai';
 import { Bash } from 'just-bash/browser';
 
 import type { Workspace } from '../api/contracts.js';
 import { isSupabashError } from '../api/errors.js';
 import { createCommandPolicy } from '../policy/inspect.js';
 import { DEFAULT_MAX_COMMAND_LENGTH, type CommandInspectDecision } from '../policy/types.js';
+import {
+  bashInputSchema,
+  describeBashTool,
+  runBashCommand,
+  truncateStream,
+  type BashOutput,
+} from './bash-surface.js';
 import { DEFAULT_MAX_BASH_OUTPUT, assertPositiveLimit, boundText } from './bounds.js';
 import type { BashToolOptions } from './options.js';
 import { safeToolText } from './redact.js';
@@ -15,8 +21,8 @@ const SCOPED_ROOT_INSTRUCTIONS =
 export const DEFAULT_MAX_BASH_EXECUTION_TIME_MS = 30_000;
 
 /**
- * The bash-tool onBeforeBashCall hook is synchronous and cannot return a typed
- * deny decision, so this adapter wraps execute() and inspects the command first.
+ * The policy inspects each command before it runs; a denial is a normal tool
+ * result with exit code 126, so the model can correct the command.
  */
 export const createWorkspaceBashTool = async (
   workspace: Pick<Workspace, 'fs'>,
@@ -35,31 +41,17 @@ export const createWorkspaceBashTool = async (
   const policy =
     options.policy ??
     createCommandPolicy({ ...options.policyOptions, fs: workspace.fs, maxCommandLength });
-  const toolkit = await createBashTool({
-    destination: '/',
-    extraInstructions: SCOPED_ROOT_INSTRUCTIONS,
-    maxOutputLength: maxBashOutput,
-    onAfterBashCall: ({ result }) => ({
-      result: {
-        ...result,
-        stderr: safeToolText(result.stderr, maxBashOutput, boundText),
-        stdout: safeToolText(result.stdout, maxBashOutput, boundText),
-      },
-    }),
-    sandbox: new Bash({
-      cwd: '/',
-      ...(options.customCommands !== undefined && { customCommands: [...options.customCommands] }),
-      executionLimits: { maxExecutionTimeMs },
-      fs: workspace.fs,
-    }),
+  const sandbox = new Bash({
+    cwd: '/',
+    ...(options.customCommands !== undefined && { customCommands: [...options.customCommands] }),
+    executionLimits: { maxExecutionTimeMs },
+    fs: workspace.fs,
   });
-  const { execute } = toolkit.bash;
-  if (execute === undefined) {
-    throw new Error('bash-tool did not expose an execute method.');
-  }
-  return {
-    ...toolkit.bash,
-    execute: async (input, extra) => {
+  const bound = (text: string, stream: 'stderr' | 'stdout'): string =>
+    safeToolText(truncateStream(text, maxBashOutput, stream), maxBashOutput, boundText);
+  return tool({
+    description: await describeBashTool(sandbox, SCOPED_ROOT_INSTRUCTIONS),
+    execute: async (input): Promise<BashOutput> => {
       const command = commandFrom(input);
       if (command.length > maxCommandLength) {
         return denied('Command exceeds the length limit.');
@@ -68,21 +60,23 @@ export const createWorkspaceBashTool = async (
       if (!decision.allow) {
         return denied(formatDenial(decision));
       }
-      let result: unknown;
+      let result: BashOutput;
       try {
-        result = await execute({ command }, extra);
+        result = await runBashCommand(sandbox, command);
       } catch (error) {
         if (isSupabashError(error) && error.code === 'POLICY_DENIED') {
           return denied(`Policy denied: ${error.message}`);
         }
         throw error;
       }
-      if (!isCommandResult(result)) {
-        throw new Error('bash-tool returned a streaming result.');
-      }
-      return result;
+      return {
+        ...result,
+        stderr: bound(result.stderr, 'stderr'),
+        stdout: bound(result.stdout, 'stdout'),
+      };
     },
-  };
+    inputSchema: bashInputSchema(),
+  });
 };
 
 const commandFrom = (input: unknown): string => {
@@ -102,11 +96,4 @@ const formatDenial = (decision: CommandInspectDecision): string => {
   return `Policy denied (${decision.code}): ${decision.reason ?? 'Command denied by policy.'}`;
 };
 
-const denied = (stderr: string): CommandResult => ({ exitCode: 126, stderr, stdout: '' });
-
-const isCommandResult = (value: unknown): value is CommandResult =>
-  typeof value === 'object' &&
-  value !== null &&
-  'exitCode' in value &&
-  'stderr' in value &&
-  'stdout' in value;
+const denied = (stderr: string): BashOutput => ({ exitCode: 126, stderr, stdout: '' });

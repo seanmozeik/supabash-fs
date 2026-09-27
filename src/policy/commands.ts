@@ -94,8 +94,6 @@ const ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   'find',
   'fold',
   'grep',
-  'gunzip',
-  'gzip',
   'head',
   'help',
   'history',

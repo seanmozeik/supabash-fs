@@ -25,13 +25,18 @@ describe('package metadata', () => {
 
   test('keeps AI SDK integration on an optional export subpath', () => {
     expect(packageJson.exports['./ai-sdk']).toStrictEqual({
-      import: './dist/ai-sdk.js',
+      import: './dist/ai-sdk/index.js',
       types: './dist/ai-sdk/index.d.ts',
     });
+    expect(packageJson.dependencies).toStrictEqual({});
+    expect(Object.keys(packageJson.peerDependencies).toSorted()).toStrictEqual([
+      '@ai-sdk/openai',
+      '@supabase/supabase-js',
+      'ai',
+    ]);
     expect(packageJson.peerDependenciesMeta).toMatchObject({
       '@ai-sdk/openai': { optional: true },
       ai: { optional: true },
-      'bash-tool': { optional: true },
     });
   });
 

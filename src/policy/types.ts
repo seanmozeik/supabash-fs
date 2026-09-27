@@ -3,6 +3,7 @@ import type { IFileSystem } from 'just-bash/browser';
 export type PolicyReasonCode =
   | 'ambiguous-path'
   | 'command-too-long'
+  | 'compression-unsupported'
   | 'dangerous-command'
   | 'host-escape'
   | 'network-disabled'

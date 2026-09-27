@@ -47,18 +47,20 @@ tools live on `@seanmozeik/supabash-fs/ai-sdk`.
 ## Install
 
 ```sh
-bun add @seanmozeik/supabash-fs just-bash
+bun add @seanmozeik/supabash-fs @supabase/supabase-js
 ```
 
-`just-bash` is a peer dependency. `ai`, `@ai-sdk/openai`, and `bash-tool` are
-optional peers for the AI SDK export. The package does not use Effect or a
-Node.js filesystem.
+`@supabase/supabase-js` is a peer (`>=2.112.1 <3`). `ai` and `@ai-sdk/openai`
+are optional peers for the AI SDK export. Just Bash, YAML and Unbash are bundled;
+consumers do not install Just Bash or bash-tool. Import `Bash`, `defineCommand`,
+`InMemoryFs`, and the types `CustomCommand`, `IFileSystem`, `FsStat` from this
+package. See [edge packaging](docs/edge-packaging.md).
 
 Deno 2 can load the package through npm compatibility:
 
 ```ts
 import { Supabash } from 'npm:@seanmozeik/supabash-fs';
-import { Bash } from 'npm:just-bash/browser';
+import { Bash } from 'npm:@seanmozeik/supabash-fs';
 ```
 
 When `deno run` uses a restricted environment allow-list, also allow reads of
@@ -102,7 +104,7 @@ bucket name. The request must contain the user's bearer access token.
 
 ```ts
 import { Supabash } from '@seanmozeik/supabash-fs';
-import { Bash } from 'just-bash/browser';
+import { Bash } from '@seanmozeik/supabash-fs';
 
 export const runCommand = async (
   request: Request,
@@ -131,8 +133,8 @@ export const runCommand = async (
 };
 ```
 
-Use `just-bash/browser` in edge runtimes. It excludes commands that need
-Node.js or an operating-system filesystem.
+The bundled shell uses Just Bash’s browser build, which excludes the host
+filesystem and Node-only execution backends.
 
 `Supabash.open()` does this work before it lists Storage objects:
 
@@ -218,7 +220,7 @@ when those staged edits become durable.
 
 ```ts
 import { applyPatch, Supabash } from '@seanmozeik/supabash-fs';
-import { Bash } from 'just-bash/browser';
+import { Bash } from '@seanmozeik/supabash-fs';
 
 const workspace = await Supabash.open({
   bucket: 'workspaces',
@@ -335,9 +337,9 @@ separate chunk and loads it only when `viewImage.enabled` is true.
 Tool text is truncated with a stable `\n[truncated]\n` marker. Errors and
 outputs redact bearer tokens, signed URLs, and secret-looking keys.
 
-`bash-tool` does not expose a typed preflight hook, so the AI SDK adapter
-wraps `execute` and inspects the command first. That is a damage limiter, not
-an authorization boundary. Just Bash also receives a 30-second wall-clock
+The AI SDK adapter owns its bash tool and inspects each command before execution.
+Its model-facing description and schema preserve bash-tool 1.3.19’s surface.
+Policy inspection is a damage limiter, not an authorization boundary. Just Bash also receives a 30-second wall-clock
 deadline by default. Set `bash.limits.maxExecutionTimeMs` to a positive safe
 integer to change it.
 
@@ -349,7 +351,7 @@ command name to `bash.policyOptions.extraAllowCommands` so the command policy
 can inspect pipelines and compound syntax before Just Bash runs it:
 
 ```ts
-import { defineCommand } from 'just-bash/browser';
+import { defineCommand } from '@seanmozeik/supabash-fs';
 
 const count = defineCommand('count', async (_args, context) => ({
   exitCode: 0,
@@ -935,16 +937,31 @@ deployment's actual workload, file sizes, and latency target.
 
 ## Runtime and package size
 
-The package builds for browser, Deno, and edge runtimes. It uses web-standard
-`Request`, `fetch`, `crypto`, `Blob`, and encoding APIs. It imports Just Bash
-from `just-bash/browser`.
+The package targets Supabase Edge (Deno) and uses web-standard APIs only:
+`Request`, `fetch`, `crypto`, `Blob`, and encoding APIs. It also loads and is
+smoke-tested under Bun and Node. Published JavaScript has no `node:*` imports.
+
+Compression is unsupported. The command policy denies `gzip`, `gunzip`, `zcat`,
+`rg -z` / `--search-zip` (including short-flag clusters), and `rg --pre`
+preprocessors, which could invoke compression outside inspection. The build
+replaces Just Bash’s `node:zlib` with a throwing stub. Ordinary `rg` searches
+remain available. See the [compression audit](docs/compression-audit.md) for
+call sites and the existing limits of static policy inspection.
+
+Both exports are minified, tree-shaken ESM built with tsdown, including bundled
+declarations. Runtime dependencies are inlined; there is no separate edge export.
+The build rejects every `node:*` import and every external package other than
+the declared peers.
+The default-policy-blocked HTML converter is omitted, including turndown and
+@mixmark-io/domino. Explicitly allowing `html-to-markdown` no longer enables its
+built-in converter; supply a custom command if needed.
 
 Opening a workspace lists every object below the prefix. Regular file bodies
 stay lazy. A very large object count increases open time.
 
 The root bundle is tree-shakeable relative to the AI SDK export. Importing
-`@seanmozeik/supabash-fs` must not resolve `ai`, `@ai-sdk/openai`, or
-`bash-tool`. Import `@seanmozeik/supabash-fs/ai-sdk` only when those optional
+`@seanmozeik/supabash-fs` must not resolve `ai` or `@ai-sdk/openai`. Import
+`@seanmozeik/supabash-fs/ai-sdk` only when those optional
 peers are installed. A clean root-only package test confirms that a missing AI
 peer is named in the import error. The image implementation is a separate
 dynamic chunk and is not loaded when image support is disabled.
@@ -977,7 +994,7 @@ suite, removes all package-owned database objects and synthetic users, and
 checks that cleanup succeeded. Its required environment variables are listed
 by `scripts/run-postgres-integration.sh` when one is missing.
 
-The gate checks formatting, lint, TypeScript, source size, tests, the browser
+The gate checks formatting, lint, TypeScript, source size, tests, the edge
 build, Deno type resolution, production dependencies, package contents, clean
 Bun consumers, and a clean Deno consumer of the packed tarball. This repository
 does not add CI.

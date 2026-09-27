@@ -45,9 +45,8 @@ try {
         dependencies: {
           '@ai-sdk/openai': '4.0.66',
           '@seanmozeik/supabash-fs': `file:${tarball}`,
+          '@supabase/supabase-js': '2.116.0',
           ai: '7.0.100',
-          'bash-tool': '1.3.19',
-          'just-bash': '3.4.2',
         },
         private: true,
         type: 'module',
@@ -64,7 +63,7 @@ try {
       path.join(consumerDirectory, 'smoke.ts'),
       `import { createFileSystemSnapshot, createMountedFileSystem, isRetryableSupabashError, isUnknownOutcomeSupabashError, POSTGRES_INSTALL_SQL_URL, Supabash, SupabashError } from '@seanmozeik/supabash-fs';
 import { createTools, type WorkspaceTools } from '@seanmozeik/supabash-fs/ai-sdk';
-import { InMemoryFs } from 'just-bash/browser';
+import { InMemoryFs } from '@seanmozeik/supabash-fs';
 if (!Object.hasOwn(Supabash, 'open')) throw new Error('Missing Supabash.open.');
 if (!Object.hasOwn(Supabash, 'openPostgres')) throw new Error('Missing Supabash.openPostgres.');
 if (typeof createTools !== 'function') throw new Error('Missing createTools.');

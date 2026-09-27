@@ -1,60 +1,50 @@
-/**
- * Bun's ESM bundler emits empty stubs for `export { name } from './mod.js'`.
- * Rebind through local constants so the production bundle includes the implementations.
- */
-/* oxlint-disable unicorn/prefer-export-from -- bun drops `export { name } from` as empty stubs */
-
-import {
-  CAPABILITY_SCHEMA_VERSION as capabilitySchemaVersion,
-  DEFAULT_MAX_CAPABILITY_LIFETIME_SECONDS as defaultMaxCapabilityLifetimeSeconds,
-  POSTGRES_CAPABILITY_SCHEMA_VERSION as postgresCapabilitySchemaVersion,
+export { Bash, defineCommand, InMemoryFs } from 'just-bash/browser';
+export type { CustomCommand, IFileSystem, FsStat } from 'just-bash/browser';
+export {
+  CAPABILITY_SCHEMA_VERSION,
+  DEFAULT_MAX_CAPABILITY_LIFETIME_SECONDS,
+  POSTGRES_CAPABILITY_SCHEMA_VERSION,
 } from './api/capability.js';
-import { HISTORY_SCHEMA_VERSION as historySchemaVersion } from './api/commit.js';
-import {
-  createYamlFrontmatterCodec as yamlFrontmatterCodec,
-  plainTextDocumentCodec as textDocumentCodec,
-  renderStoredDocument as renderWorkspaceDocument,
+export { HISTORY_SCHEMA_VERSION } from './api/commit.js';
+export {
+  createYamlFrontmatterCodec,
+  plainTextDocumentCodec,
+  renderStoredDocument,
 } from './api/document-codec.js';
-import {
-  isRetryableSupabashError as retryableSupabashError,
-  isSupabashError as recognizeSupabashError,
-  isUnknownOutcomeSupabashError as unknownOutcomeSupabashError,
+export {
+  isRetryableSupabashError,
+  isSupabashError,
+  isUnknownOutcomeSupabashError,
 } from './api/errors.js';
-import { POSTGRES_WORKSPACE_CAPABILITIES as postgresWorkspaceCapabilities } from './api/postgres.js';
-import { Supabash as openWorkspace, SupabashError as WorkspaceError } from './api/supabash.js';
-import {
-  createDelegatedCapability as signDelegatedCapability,
-  createPostgresDelegatedCapability as signPostgresDelegatedCapability,
+export { POSTGRES_WORKSPACE_CAPABILITIES } from './api/postgres.js';
+export { Supabash, SupabashError } from './api/supabash.js';
+export {
+  createDelegatedCapability,
+  createPostgresDelegatedCapability,
 } from './capability/create.js';
-import { importCapabilitySecret as loadCapabilitySecret } from './capability/secret.js';
-import { verifyDelegatedCapability as checkDelegatedCapability } from './capability/verify.js';
-import { createWorkspaceFileSystemView as createFileSystemView } from './core/filesystem-view.js';
-import {
-  DEFAULT_MAX_DIFF_PREVIEW_BYTES as defaultMaxDiffPreviewBytes,
-  DEFAULT_MAX_FILE_SIZE as defaultMaxFileSize,
-  DEFAULT_MAX_HISTORY_PAGE_SIZE as defaultMaxHistoryPageSize,
-  DEFAULT_MAX_PATH_LENGTH as defaultMaxPathLength,
-  DEFAULT_MAX_REVISIONS_RETAINED as defaultMaxRevisionsRetained,
-  DEFAULT_MAX_STAGED_BYTES as defaultMaxStagedBytes,
-  DEFAULT_MAX_TRANSACTION_METADATA_BYTES as defaultMaxTransactionMetadataBytes,
-  DEFAULT_MAX_VISIBLE_FILES as defaultMaxVisibleFiles,
+export { importCapabilitySecret } from './capability/secret.js';
+export { verifyDelegatedCapability } from './capability/verify.js';
+export { createWorkspaceFileSystemView } from './core/filesystem-view.js';
+export {
+  DEFAULT_MAX_DIFF_PREVIEW_BYTES,
+  DEFAULT_MAX_FILE_SIZE,
+  DEFAULT_MAX_HISTORY_PAGE_SIZE,
+  DEFAULT_MAX_PATH_LENGTH,
+  DEFAULT_MAX_REVISIONS_RETAINED,
+  DEFAULT_MAX_STAGED_BYTES,
+  DEFAULT_MAX_TRANSACTION_METADATA_BYTES,
+  DEFAULT_MAX_VISIBLE_FILES,
 } from './history/limits.js';
-import { createMountedFileSystem as mountFileSystems } from './mounts/compose.js';
-import {
-  createFileSystemSnapshot as snapshotFiles,
-  readWorkspaceSnapshot as snapshotRevision,
-} from './mounts/snapshot.js';
-import { applyDiff as applyV4ADiff } from './patch/apply-diff.js';
-import {
-  applyPatch as applyWorkspacePatch,
-  applyPatchOperations as applyWorkspacePatchOperations,
-} from './patch/executor.js';
-import { DEFAULT_MAX_PATCH_SIZE as defaultMaxPatchSize } from './patch/operations.js';
-import { createCommandPolicy as createWorkspaceCommandPolicy } from './policy/inspect.js';
-import {
-  DEFAULT_MAX_COMMAND_LENGTH as defaultMaxCommandLength,
-  DEFAULT_MAX_PIPELINE_DEPTH as defaultMaxPipelineDepth,
-  DEFAULT_MAX_SEGMENTS as defaultMaxSegments,
+export { createMountedFileSystem } from './mounts/compose.js';
+export { createFileSystemSnapshot, readWorkspaceSnapshot } from './mounts/snapshot.js';
+export { applyDiff } from './patch/apply-diff.js';
+export { applyPatch, applyPatchOperations } from './patch/executor.js';
+export { DEFAULT_MAX_PATCH_SIZE } from './patch/operations.js';
+export { createCommandPolicy } from './policy/inspect.js';
+export {
+  DEFAULT_MAX_COMMAND_LENGTH,
+  DEFAULT_MAX_PIPELINE_DEPTH,
+  DEFAULT_MAX_SEGMENTS,
 } from './policy/types.js';
 
 export type {
@@ -161,45 +151,8 @@ export type {
   PolicyReasonCode,
 } from './policy/types.js';
 
-export const CAPABILITY_SCHEMA_VERSION = capabilitySchemaVersion;
-export const POSTGRES_CAPABILITY_SCHEMA_VERSION = postgresCapabilitySchemaVersion;
-export const DEFAULT_MAX_CAPABILITY_LIFETIME_SECONDS = defaultMaxCapabilityLifetimeSeconds;
-export const DEFAULT_MAX_COMMAND_LENGTH = defaultMaxCommandLength;
-export const DEFAULT_MAX_DIFF_PREVIEW_BYTES = defaultMaxDiffPreviewBytes;
-export const DEFAULT_MAX_FILE_SIZE = defaultMaxFileSize;
-export const DEFAULT_MAX_HISTORY_PAGE_SIZE = defaultMaxHistoryPageSize;
-export const DEFAULT_MAX_PATCH_SIZE = defaultMaxPatchSize;
-export const DEFAULT_MAX_PATH_LENGTH = defaultMaxPathLength;
-export const DEFAULT_MAX_PIPELINE_DEPTH = defaultMaxPipelineDepth;
-export const DEFAULT_MAX_REVISIONS_RETAINED = defaultMaxRevisionsRetained;
-export const DEFAULT_MAX_SEGMENTS = defaultMaxSegments;
-export const DEFAULT_MAX_STAGED_BYTES = defaultMaxStagedBytes;
-export const DEFAULT_MAX_TRANSACTION_METADATA_BYTES = defaultMaxTransactionMetadataBytes;
-export const DEFAULT_MAX_VISIBLE_FILES = defaultMaxVisibleFiles;
-export const HISTORY_SCHEMA_VERSION = historySchemaVersion;
-export const POSTGRES_WORKSPACE_CAPABILITIES = postgresWorkspaceCapabilities;
 export const POSTGRES_INSTALL_SQL_URL = new URL(
   '../sql/postgres/0001_install.sql',
   import.meta.url,
 );
 export const POSTGRES_REMOVE_SQL_URL = new URL('../sql/postgres/0001_remove.sql', import.meta.url);
-export const Supabash = openWorkspace;
-export const SupabashError = WorkspaceError;
-export const isSupabashError = recognizeSupabashError;
-export const isRetryableSupabashError = retryableSupabashError;
-export const isUnknownOutcomeSupabashError = unknownOutcomeSupabashError;
-export const applyDiff = applyV4ADiff;
-export const applyPatch = applyWorkspacePatch;
-export const applyPatchOperations = applyWorkspacePatchOperations;
-export const createCommandPolicy = createWorkspaceCommandPolicy;
-export const createWorkspaceFileSystemView = createFileSystemView;
-export const createMountedFileSystem = mountFileSystems;
-export const createFileSystemSnapshot = snapshotFiles;
-export const readWorkspaceSnapshot = snapshotRevision;
-export const createDelegatedCapability = signDelegatedCapability;
-export const createPostgresDelegatedCapability = signPostgresDelegatedCapability;
-export const importCapabilitySecret = loadCapabilitySecret;
-export const verifyDelegatedCapability = checkDelegatedCapability;
-export const createYamlFrontmatterCodec = yamlFrontmatterCodec;
-export const plainTextDocumentCodec = textDocumentCodec;
-export const renderStoredDocument = renderWorkspaceDocument;

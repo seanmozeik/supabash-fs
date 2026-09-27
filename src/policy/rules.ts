@@ -8,6 +8,7 @@ import {
   isNetworkCommand,
   isWrapperCommand,
 } from './commands.js';
+import { checkCompression } from './compression.js';
 import {
   dynamicWord,
   isFlag,
@@ -113,6 +114,10 @@ const evaluateSegment = async (
     return denyPolicy('unsupported-syntax', 'Command segment is missing a command name.');
   }
   if (segment.words[0]?.kind !== 'dynamic') {
+    const compression = checkCompression(segment);
+    if (!compression.allow) {
+      return compression;
+    }
     if (extraDeny.has(head) || isDangerousCommand(head)) {
       return denyPolicy('dangerous-command', `Command '${head}' is blocked by policy.`);
     }

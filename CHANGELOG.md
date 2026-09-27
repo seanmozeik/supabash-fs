@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- Ship both public entries as minified, tree-shaken edge ESM and bundle declarations
+  with tsdown. Inline Just Bash's browser build, YAML, Unbash and their runtime
+  dependencies; remove runtime npm dependencies and the Just Bash peer.
+- Make Supabase JS a peer (`>=2.112.1 <3`) so hosts share their installed client.
+- Replace bash-tool with an owned AI SDK tool preserving its 1.3.19 model-facing
+  description, input schema, execution behavior, truncation and redaction.
+- Re-export `Bash`, `defineCommand`, `InMemoryFs`, `CustomCommand`, `IFileSystem`
+  and `FsStat` from the root. Consumers no longer need Just Bash imports.
+- Omit turndown and @mixmark-io/domino, used only by the default-policy-blocked
+  `html-to-markdown` command. Explicit opt-ins need a host custom implementation.
+- Target Supabase Edge (Deno) with web-standard APIs and zero `node:*` imports;
+  verify loading and execution under Bun and Node.
+- Remove `gzip` and `gunzip` from the command policy allow list; explicitly deny
+  those commands and the already-unlisted `zcat` with `compression-unsupported`.
+  Deny `rg -z` / `--search-zip`, short-flag clusters containing `z`, and `rg --pre`
+  / `--pre=...` preprocessors. Alias `node:zlib` to a throwing compression stub.
+- Preserve the model-facing tool description byte-for-byte: its known-command
+  list contains none of `gzip`, `gunzip`, `zcat` or `rg`.
+
 ## 0.7.0 (unreleased)
 
 Dependencies: Supabase JS 2.116.0, Unbash 4.0.11, YAML 2.9.1, AI SDK 7.0.100,
