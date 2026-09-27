@@ -6,6 +6,34 @@ import { createStorageWorkspace } from '../../src/core/workspace.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
 describe('workspace history recovery', () => {
+  test('protects a retention floor and resumes a purged cursor only when opted in', async () => {
+    const workspace = await createStorageWorkspace(new MemoryStorage());
+    await workspace.fs.writeFile('/memory.md', 'one');
+    const first = await workspace.commit();
+    await workspace.fs.writeFile('/memory.md', 'two');
+    const second = await workspace.commit();
+    await workspace.fs.writeFile('/memory.md', 'three');
+    const third = await workspace.commit();
+    await expect(workspace.purge({ keepAfterRevision: 'missing' })).rejects.toMatchObject({
+      code: 'REVISION_NOT_FOUND',
+    });
+    await workspace.purge({ maxRevisions: 0, maxAgeMs: 0, keepAfterRevision: second.revision });
+    await expect(workspace.readRevision(first.revision)).rejects.toMatchObject({
+      code: 'REVISION_NOT_FOUND',
+    });
+    await expect(workspace.readRevision(second.revision)).resolves.toMatchObject({
+      revision: second.revision,
+    });
+    await expect(workspace.history({ cursor: first.cursor })).rejects.toMatchObject({
+      code: 'REVISION_NOT_FOUND',
+    });
+    const page = await workspace.history({ cursor: first.cursor, cursorMissing: 'oldest' });
+    expect(page.records.map((record) => record.revision)).toStrictEqual([
+      second.revision,
+      third.revision,
+    ]);
+  });
+
   test('checkpoints the committed revision and diffs it against staged edits', async () => {
     const workspace = await createStorageWorkspace(new MemoryStorage());
     await workspace.fs.writeFile('/notes.md', 'one\n');

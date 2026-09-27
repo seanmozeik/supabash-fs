@@ -9,6 +9,8 @@ import type {
   HistoryQuery,
   PurgeOptions,
   PurgeReceipt,
+  RedactOptions,
+  RedactReceipt,
   RevisionDiff,
   RevisionDiffInput,
 } from '../api/history.js';
@@ -76,6 +78,8 @@ export interface BackendCommitResult {
 }
 
 export interface WorkspaceBackend {
+  readonly redact: (options: RedactOptions) => Promise<RedactReceipt>;
+  readonly restoreFloor: () => Promise<string | null>;
   readonly capabilities: WorkspaceCapabilities;
   readonly documentCodec: TextDocumentCodec;
   readonly checkpoint: (options: CheckpointOptions) => Promise<CheckpointReceipt>;

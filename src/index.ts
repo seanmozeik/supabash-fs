@@ -119,6 +119,8 @@ export type {
   HistoryRecord,
   PurgeOptions,
   PurgeReceipt,
+  RedactOptions,
+  RedactReceipt,
   ReadonlyWorkspaceView,
   RestorePlan,
   RevisionDiff,

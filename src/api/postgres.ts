@@ -2,6 +2,7 @@ import type { WorkspaceLimits } from '../history/limits.js';
 import type { DelegatedOperation } from './capability.js';
 import type { Workspace, WorkspaceCapabilities } from './contracts.js';
 import type { DocumentMetadata, TextDocumentCodec } from './document-codec.js';
+import type { RedactOptions, RedactReceipt } from './history.js';
 import type { WorkspaceObservability } from './observability.js';
 
 export const POSTGRES_WORKSPACE_CAPABILITIES = Object.freeze({
@@ -15,6 +16,8 @@ export const POSTGRES_WORKSPACE_CAPABILITIES = Object.freeze({
 export type PostgresWorkspaceCapabilities = typeof POSTGRES_WORKSPACE_CAPABILITIES;
 
 export interface PostgresWorkspace extends Workspace {
+  readonly redact: (options: RedactOptions) => Promise<RedactReceipt>;
+  readonly restoreFloor: () => Promise<string | null>;
   readonly capabilities: PostgresWorkspaceCapabilities;
   /** A detached copy of the committed base. Staged filesystem changes are excluded. */
   readonly committedSnapshot: () => Promise<PostgresWorkspaceSnapshot>;

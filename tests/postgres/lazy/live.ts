@@ -1,4 +1,4 @@
-import { asRecord, assert, type LiveContext, type TestUser } from '../live-context.ts';
+import { asRecord, assert, type LiveContext, type TestUser } from '../live/context.ts';
 
 export const proveLazyReads = async (
   context: LiveContext,

@@ -10,6 +10,8 @@ import type {
   HistoryQuery,
   PurgeOptions,
   PurgeReceipt,
+  RedactOptions,
+  RedactReceipt,
   ReadonlyWorkspaceView,
   RestorePlan,
   RevisionDiff,
@@ -111,7 +113,7 @@ class GuardedWorkspace implements Workspace {
     return this.allow('restore', () => this.inner.restore(revision));
   }
 
-  private allow<T>(operation: DelegatedOperation, work: () => Promise<T>): Promise<T> {
+  protected allow<T>(operation: DelegatedOperation, work: () => Promise<T>): Promise<T> {
     try {
       this.assertOneOf(operation);
     } catch (error) {
@@ -149,6 +151,16 @@ class GuardedPostgresWorkspace extends GuardedWorkspace implements DelegatedPost
     this.capabilities = inner.capabilities;
     this.delegation = delegation;
     this.postgres = inner;
+  }
+
+  redact(options: RedactOptions): Promise<RedactReceipt> {
+    return this.allow('redact', () => this.postgres.redact(options));
+  }
+
+  restoreFloor(): Promise<string | null> {
+    return this.allow(this.delegation.operations.includes('history') ? 'history' : 'restore', () =>
+      this.postgres.restoreFloor(),
+    );
   }
 
   committedSnapshot(): Promise<PostgresWorkspaceSnapshot> {

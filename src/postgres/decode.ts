@@ -12,6 +12,7 @@ import type {
   HistoryPage,
   HistoryRecord,
   PurgeReceipt,
+  RedactReceipt,
   RevisionDiff,
   RevisionDiffEntry,
   RevisionDiffKind,
@@ -168,8 +169,27 @@ export const decodePurge = (value: unknown): PurgeReceipt => {
   };
 };
 
+export const decodeRedact = (value: unknown): RedactReceipt => {
+  const record = object(value, 'redaction receipt');
+  return {
+    redactionId: string(record, 'redactionId'),
+    revisions: array(record, 'revisions').map((entry) =>
+      primitiveString(entry, 'redacted revision'),
+    ),
+    bodies: array(record, 'bodies').map((entry) => primitiveString(entry, 'deleted body')),
+    bytes: number(record, 'bytes'),
+    dryRun: boolean(record, 'dryRun'),
+  };
+};
+
+export const decodeRestoreFloor = (value: unknown): string | null =>
+  value === null ? null : primitiveString(value, 'restore floor');
+
 export const decodeDocument = (value: unknown): BackendDocument => {
   const record = object(value, 'snapshot document');
+  if (record['kind'] === 'unavailable') {
+    throw new SupabashError('REDACTED', 'Historical document has been redacted.');
+  }
   const body = text(record, 'body');
   const bodyHash = string(record, 'bodyHash', 'body_hash');
   const bodyByteSize = number(record, 'bodyByteSize', 'body_byte_size');

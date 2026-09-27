@@ -14,8 +14,8 @@ import {
   type Json,
   type LiveContext,
   type TestUser,
-} from './live-context.ts';
-import type { CoreProof } from './live-core.ts';
+} from './context.ts';
+import type { CoreProof } from './core.ts';
 
 const KEY_ID = 'integration';
 const text = new TextEncoder();
@@ -41,6 +41,7 @@ export const proveDelegated = async (
 
   await proveScopedAccess(context, core, secretKey, claims);
   await proveGrantIsolation(context, secondUser, secretKey, claims);
+  await proveRedactionGrant(context, secretKey, claims, secondUser);
   await proveRejections(context, secretKey, claims);
   await provePrivilegeBoundary(context);
   await proveRevocation(context, secretKey, claims);
@@ -296,4 +297,40 @@ const base64url = (bytes: Uint8Array): string => {
     binary += String.fromCodePoint(byte);
   }
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+};
+
+const proveRedactionGrant = async (
+  context: LiveContext,
+  secretKey: CryptoKey,
+  claims: PostgresDelegatedCapabilityClaims,
+  secondUser: TestUser,
+): Promise<void> => {
+  for (const redactAllowed of [false, true]) {
+    const exchange = asRecord(
+      await context.serviceRpc('supabash_exchange_capability', {
+        p_capability: await mint(secretKey, {
+          ...claims,
+          nonce: `${context.runId}-redact-${redactAllowed}`,
+          ops: redactAllowed ? ['redact'] : ['history', 'purge'],
+        }),
+      }),
+      'redact grant',
+    );
+    const grant = exchange['delegatedGrant'];
+    assert(typeof grant === 'string', 'Missing redact grant.');
+    const result = await context.serviceRpcResponse('supabash_redact', {
+      p_workspace_id: claims.workspace,
+      p_paths: ['/docs/update.md'],
+      p_dry_run: true,
+      p_delegated_grant: grant,
+    });
+    assert(result.ok === redactAllowed, 'SQL did not enforce the distinct redact operation.');
+    const other = await context.createWorkspace(secondUser.accessToken);
+    const escaped = await context.serviceRpcResponse('supabash_redact', {
+      p_workspace_id: other,
+      p_paths: ['/docs/update.md'],
+      p_delegated_grant: grant,
+    });
+    assert(!escaped.ok, 'A redact grant escaped its workspace.');
+  }
 };

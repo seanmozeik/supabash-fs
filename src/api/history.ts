@@ -21,6 +21,7 @@ export interface CheckpointRecord extends CheckpointReceipt {
 
 export interface HistoryQuery {
   readonly cursor?: string;
+  readonly cursorMissing?: 'error' | 'oldest';
   readonly limit?: number;
 }
 
@@ -89,6 +90,8 @@ export interface RestorePlan {
 }
 
 export interface PurgeOptions {
+  /** Protect this revision and all newer revisions. */
+  readonly keepAfterRevision?: string;
   readonly dryRun?: boolean;
   readonly maxAgeMs?: number;
   readonly maxRevisions?: number;
@@ -116,4 +119,25 @@ export interface ReadonlyWorkspaceView {
   /** Detached original bytes, including binary files in Storage revisions. */
   readonly readFileBuffer: (path: string) => Promise<Uint8Array>;
   readonly revision: string;
+}
+
+/** Postgres historical redaction; selectors are exact paths or stored body hashes (union). */
+export interface RedactOptions {
+  readonly paths?: readonly string[];
+  readonly bodyHashes?: readonly string[];
+  /** Exclusive boundary; defaults to the current head. */
+  readonly before?: string;
+  readonly dryRun?: boolean;
+  readonly reason?: string;
+  readonly metadataKeys?: readonly string[];
+  /** Cause is free text, so it is cleared as a whole. */
+  readonly clearCause?: boolean;
+}
+
+export interface RedactReceipt {
+  readonly redactionId: string;
+  readonly revisions: readonly string[];
+  readonly bodies: readonly string[];
+  readonly bytes: number;
+  readonly dryRun: boolean;
 }

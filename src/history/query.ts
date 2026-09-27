@@ -32,7 +32,7 @@ export const readHistoryPage = async (
   const completes = await listCompleteRecords(history);
   const causal = await causalCompletes(history, completes);
   const records = causal.map((complete) => historyRecord(complete, scope));
-  const start = historyStart(records, query.cursor);
+  const start = historyStart(records, query.cursor, query.cursorMissing);
   const page = records.slice(start, start + limit);
   const next = start + page.length < records.length ? page.at(-1)?.cursor : undefined;
   return next === undefined ? { records: page } : { nextCursor: next, records: page };
@@ -65,12 +65,19 @@ const causalCompletes = async (
   return reverse.toReversed();
 };
 
-const historyStart = (records: readonly HistoryRecord[], cursor: string | undefined): number => {
+const historyStart = (
+  records: readonly HistoryRecord[],
+  cursor: string | undefined,
+  missing?: 'error' | 'oldest',
+): number => {
   if (cursor === undefined) {
     return 0;
   }
   const index = records.findIndex((record) => record.transactionId === cursor);
   if (index === -1) {
+    if (missing === 'oldest') {
+      return 0;
+    }
     throw new SupabashError(
       'REVISION_NOT_FOUND',
       'History cursor does not match a committed transaction.',

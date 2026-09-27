@@ -127,6 +127,7 @@ docker exec "$database_container" psql -U postgres -d postgres -v ON_ERROR_STOP=
 psql_file "$install_sql"
 psql_file "$repo_root/sql/postgres/0002_lazy_reads.sql"
 psql_file "$repo_root/sql/postgres/0003_versioned_entries.sql"
+psql_file "$repo_root/sql/postgres/0004_redact_retention.sql"
 psql_file "$test_support_sql"
 
 mkdir -p "$results_dir/edge"

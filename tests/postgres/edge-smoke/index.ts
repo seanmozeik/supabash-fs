@@ -1,7 +1,7 @@
 import { createMountedFileSystem, readWorkspaceSnapshot, Supabash } from '@seanmozeik/supabash-fs';
 import { createTools } from '@seanmozeik/supabash-fs/ai-sdk';
 
-import { asRecord, formatError, parseJson } from '../live-context.ts';
+import { asRecord, formatError, parseJson } from '../live/context.ts';
 import { edgeRuntime, isRecord } from '../runtime.ts';
 
 const runtime = edgeRuntime();

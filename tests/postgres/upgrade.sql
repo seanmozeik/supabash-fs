@@ -37,6 +37,10 @@ update upgrade_fixture set legacy_revision = pg_temp.write_fixture('/changed.md'
 \ir ../../sql/postgres/0003_versioned_entries.sql
 
 update upgrade_fixture set new_revision = pg_temp.write_fixture('/changed.md', 'after');
+
+-- A populated 0.7.0 database; apply twice to prove upgrade idempotence.
+\ir ../../sql/postgres/0004_redact_retention.sql
+\ir ../../sql/postgres/0004_redact_retention.sql
 do $test$
 declare
   w uuid := (select workspace_id from upgrade_fixture);
@@ -51,6 +55,23 @@ begin
   if (select count(*) from supabash.document_versions where workspace_id = w) <> 3 then
     raise exception 'Upgrade copied unchanged entries';
   end if;
+  perform public.supabash_redact(w, array['/changed.md'], p_before_revision => new_revision, p_dry_run => true);
+  doc := public.supabash_load_document(w, old_revision, '/changed.md');
+  if doc->>'body' <> 'before' then raise exception 'Dry run changed legacy history'; end if;
+  perform public.supabash_redact(w, array['/changed.md'], p_before_revision => new_revision);
+  if exists (select 1 from supabash.bodies where workspace_id = w and body = 'before') then
+    raise exception 'Legacy body survived redaction';
+  end if;
+  if not exists (select 1 from supabash.revision_entries where workspace_id = w
+    and revision_id = old_revision and metadata @> '{"redacted":true}') then
+    raise exception 'Legacy manifest was not tombstoned';
+  end if;
+  begin
+    perform public.supabash_load_revision(w, old_revision);
+    raise exception 'Legacy restore crossed fence';
+  exception when invalid_parameter_value then
+    if sqlerrm <> 'SUPABASH_RESTORE_CROSSES_REDACTION' then raise; end if;
+  end;
   perform public.supabash_checkpoint(w, 'upgrade-pin');
   perform pg_temp.write_fixture('/changed.md', 'latest');
   perform public.supabash_purge(w, 1);

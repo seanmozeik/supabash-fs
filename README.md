@@ -154,7 +154,8 @@ Run the versioned install asset as the Supabase database owner:
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
   -f node_modules/@seanmozeik/supabash-fs/sql/postgres/0001_install.sql \
   -f node_modules/@seanmozeik/supabash-fs/sql/postgres/0002_lazy_reads.sql \
-  -f node_modules/@seanmozeik/supabash-fs/sql/postgres/0003_versioned_entries.sql
+  -f node_modules/@seanmozeik/supabash-fs/sql/postgres/0003_versioned_entries.sql \
+  -f node_modules/@seanmozeik/supabash-fs/sql/postgres/0004_redact_retention.sql
 ```
 
 The package exports the same file as
@@ -527,6 +528,7 @@ accepted changes without reading unchanged files.
 
 Apply `sql/postgres/0002_lazy_reads.sql` and then `0003_versioned_entries.sql`
 once after the foundation installation, before upgrading clients to 0.7.0.
+For the redaction/retention API, also apply `0004_redact_retention.sql`.
 Their exports are `@seanmozeik/supabash-fs/postgres/lazy-reads.sql` and
 `@seanmozeik/supabash-fs/postgres/versioned-entries.sql`.
 `await workspace.committedSnapshot()` explicitly loads a complete detached
@@ -986,3 +988,31 @@ does not add CI.
 
 MIT. See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for source and
 dependency notices.
+
+### Forgetting and history retention (Postgres)
+
+After committing a forget edit, redact the older versions of its paths:
+
+```ts
+await workspace.redact({
+  paths: ['/memories/preferences.md'],
+  before: forgetReceipt.revision,
+  metadataKeys: ['summary'],
+  clearCause: true,
+});
+const floor = await workspace.restoreFloor();
+await workspace.purge({ maxRevisions: 50, keepAfterRevision: oldestPendingRevision });
+const page = await workspace.history({ cursor, cursorMissing: 'oldest' });
+```
+
+Redaction replaces historical entries with tombstones, deletes unreferenced
+bodies, and creates a SQL restore fence. It preserves current files and refuses
+uncovered current copies of selected bodies. `readRevision` throws `REDACTED`;
+restore throws `RESTORE_CROSSES_REDACTION` for targets before the fence. Delegates
+need the distinct `redact` operation. Dry runs are available through `dryRun: true`.
+
+Existing 0.7.0 databases apply the idempotent
+`sql/postgres/0004_redact_retention.sql` migration. See
+[redaction, retention, and host integration](docs/redaction-retention.md) for the
+complete API, deduplication guarantees, metadata scope, SQL functions, and upgrade
+instructions. Storage supports the retention/cursor options but not redaction.

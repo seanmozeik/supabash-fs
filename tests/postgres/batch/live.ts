@@ -1,4 +1,4 @@
-import { asRecord, assert, expectCode, type LiveContext, type TestUser } from '../live-context.ts';
+import { asRecord, assert, expectCode, type LiveContext, type TestUser } from '../live/context.ts';
 
 export const proveBatchWrites = async (context: LiveContext, owner: TestUser): Promise<void> => {
   const workspaceId = await context.createWorkspace(owner.accessToken);

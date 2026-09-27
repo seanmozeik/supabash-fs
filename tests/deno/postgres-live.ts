@@ -1,5 +1,5 @@
-import { asError, formatError, LiveContext, type JsonRecord } from '../postgres/live-context.ts';
-import { runPostgresIntegration } from '../postgres/live-suite.ts';
+import { asError, formatError, LiveContext, type JsonRecord } from '../postgres/live/context.ts';
+import { runPostgresIntegration } from '../postgres/live/suite.ts';
 import { integrationRuntime } from '../postgres/runtime.ts';
 
 const runtime = integrationRuntime();
