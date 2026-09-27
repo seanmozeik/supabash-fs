@@ -41,6 +41,7 @@
     "./postgres/install.sql": "./sql/postgres/0001_install.sql",
     "./postgres/lazy-reads.sql": "./sql/postgres/0002_lazy_reads.sql",
     "./postgres/versioned-entries.sql": "./sql/postgres/0003_versioned_entries.sql",
+    "./postgres/redact-retention.sql": "./sql/postgres/0004_redact_retention.sql",
     "./postgres/remove.sql": "./sql/postgres/0001_remove.sql",
     "./package.json": "./package.json"
   },

@@ -531,8 +531,9 @@ accepted changes without reading unchanged files.
 Apply `sql/postgres/0002_lazy_reads.sql` and then `0003_versioned_entries.sql`
 once after the foundation installation, before upgrading clients to 0.7.0.
 For the redaction/retention API, also apply `0004_redact_retention.sql`.
-Their exports are `@seanmozeik/supabash-fs/postgres/lazy-reads.sql` and
-`@seanmozeik/supabash-fs/postgres/versioned-entries.sql`.
+Their exports are `@seanmozeik/supabash-fs/postgres/lazy-reads.sql`,
+`@seanmozeik/supabash-fs/postgres/versioned-entries.sql` and
+`@seanmozeik/supabash-fs/postgres/redact-retention.sql`.
 `await workspace.committedSnapshot()` explicitly loads a complete detached
 snapshot in one bulk request; `workspace.committedRevision()` reads only the revision.
 
