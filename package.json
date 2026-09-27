@@ -56,7 +56,7 @@
     "build:smoke": "bun ./scripts/check-built-package.ts && bun ./scripts/check-built-ai-sdk.ts && node ./scripts/check-built-package.ts && node ./scripts/check-built-ai-sdk.ts",
     "build:types": "bun run build:js",
     "check:deno": "deno check --minimum-dependency-age=0 --sloppy-imports --config deno.check.json tests/deno/live-supabase.ts tests/deno/ai-sdk.ts tests/deno/postgres-live.ts tests/postgres/edge-smoke/index.ts",
-    "check": "bun run format:check && bun run lint && bun run typecheck && bun run source:size",
+    "check": "bun run build && bun run format:check && bun run lint && bun run typecheck && bun run source:size",
     "fix": "oxfmt --write . && oxlint --type-aware --type-check --deny-warnings --fix .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",

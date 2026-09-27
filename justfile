@@ -26,7 +26,7 @@ install:
   bun install --frozen-lockfile
 
 [group('check')]
-[doc('Check formatting, lint rules, types, and source size')]
+[doc('Build, then check formatting, lint rules, types, and source size')]
 check: toolchain
   bun run check
 
@@ -49,7 +49,6 @@ build: toolchain
 [doc('Run checks, tests, Deno validation, build, audit, and package inspection')]
 verify: check deno-toolchain
   bun run test
-  bun run build
   bun run check:deno
   bun run build:smoke
   bun run audit:production
