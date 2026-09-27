@@ -1,14 +1,20 @@
 # Postgres SQL assets
 
-Apply `0001_install.sql`, `0002_lazy_reads.sql`, and `0003_versioned_entries.sql`
-in that order for a new installation. Existing 0.6.0 installations apply the
-last two assets once before upgrading clients to 0.7.0.
+Apply `0001_install.sql`, `0002_lazy_reads.sql`, `0003_versioned_entries.sql`,
+and `0004_redact_retention.sql` in that order for a new installation. Existing
+0.6.0 installations apply the last three assets once, and existing 0.7.0
+installations apply `0004_redact_retention.sql` once, before upgrading clients
+to 0.9.0.
 
 The second asset adds lazy and bulk pinned reads and bounds lock waits.
 The third stores only changed file entries for new revisions. It keeps existing
 revision manifests and seeds version intervals from current documents. It takes
 a workspace-table lock during migration, so schedule this upgrade with database
 maintenance. It does not change document bodies or frontmatter.
+The fourth adds redaction, retention floors, restore fences and the redaction
+epoch that every commit checks. It orders legacy revisions and refuses to run
+when a workspace's legacy order is ambiguous. It is idempotent. See
+[redaction and retention](../../docs/redaction-retention.md).
 
 `0001_install.sql` is a fresh install. There is no in-place upgrade from a 0.4.x install; remove the old one first. Run it as the Supabase database owner. Run `0001_remove.sql` to remove all package-owned database objects. Removal does not remove the shared `pgcrypto` extension. `pgcrypto` is the only extension the install needs. It needs no `pgsodium`, no `supabase_vault`, and no custom extension, so it replays on a stock Supabase PostgreSQL 17 project and on plain PostgreSQL 17.
 

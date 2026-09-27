@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
+
+Breaking. The package is edge-only: every entry is a bundled ESM file with no
+runtime npm dependencies and no `node:*` imports. `@supabase/supabase-js` is now
+a peer, and `ai` and `@ai-sdk/openai` remain optional peers. Import `Bash`,
+`defineCommand`, `InMemoryFs` and the Just Bash types from this package instead
+of `just-bash`. Compression commands are no longer supported.
+
+Apply `0004_redact_retention.sql` to an existing 0.7.0 database before upgrading
+clients. New installations apply `0001_install.sql` through
+`0004_redact_retention.sql` in order. Postgres commits now carry the redaction
+epoch, so hosts must handle `REDACTION_INVALIDATED` by reopening the workspace
+and retrying. Version 0.8.0 was not released.
 
 - Ship both public entries as minified, tree-shaken edge ESM and bundle declarations
   with tsdown. Inline Just Bash's browser build, YAML, Unbash and their runtime
@@ -52,7 +64,7 @@
 - Bundled declarations no longer reference Node typings; the import check also
   validates triple-slash references and module augmentations.
 
-## 0.7.0 (unreleased)
+## 0.7.0
 
 Dependencies: Supabase JS 2.116.0, Unbash 4.0.11, YAML 2.9.1, AI SDK 7.0.100,
 and OpenAI provider 4.0.66. Development types and lint tools are updated. Deno
