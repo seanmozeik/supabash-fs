@@ -35,7 +35,14 @@ drop policy if exists redaction_owner on supabash.redactions;
 create policy redaction_owner on supabash.redactions to supabash_api
   using (workspace_id in (select supabash.allowed_workspaces()))
   with check (workspace_id in (select supabash.allowed_workspaces()));
-grant select, insert, update, delete on supabash.redactions to supabash_api;
+-- Match the private-table ACLs even when the installer has default grants.
+revoke all on supabash.redactions from public, anon, authenticated, service_role;
+revoke update, delete on supabash.redactions from supabash_api;
+grant select, insert on supabash.redactions to supabash_api;
+-- Existing installations keep immutable revision identity/order and body content.
+-- Only receipt context and the JSON change payload need new UPDATE rights.
+grant update (metadata, cause) on supabash.workspace_revisions to supabash_api;
+grant update (change) on supabash.revision_changes to supabash_api;
 
 create or replace function supabash.assert_restore_allowed(p_workspace_id uuid, p_revision_id uuid)
 returns void language plpgsql stable security invoker
@@ -1106,7 +1113,6 @@ declare
   v_bytes bigint;
   v_id uuid := gen_random_uuid();
   v_tombstone text := supabash.sha256_text('');
-  v_result jsonb;
 begin
   perform * from supabash.authorize_workspace(p_workspace_id, array['redact'], p_delegated_grant);
   if coalesce(cardinality(p_paths), 0) + coalesce(cardinality(p_body_hashes), 0)
@@ -1147,9 +1153,28 @@ begin
   select coalesce(array_agg(distinct p order by p), '{}') into v_paths
   from unnest(v_paths || coalesce(p_paths, '{}')) p;
 
-  -- A subtransaction gives dry-run the exact same FK checks and anti-joins as
-  -- application, while rolling back every write (including the audit event).
-  begin
+  -- Compute the post-redaction references without writing. Legacy entries
+  -- survive unless selected; interval references survive if unselected or on
+  -- the retained side of the split. Current documents always retain their body.
+  -- Use this same receipt for application and dry-run under the workspace lock.
+  select coalesce(array_agg(b.body_hash order by b.body_hash), '{}'), coalesce(sum(b.byte_size), 0)
+  into v_deleted, v_bytes from supabash.bodies b
+  where b.workspace_id = p_workspace_id and b.body_hash = any(v_hashes) and b.body_hash <> v_tombstone
+    and not exists (select 1 from supabash.current_documents d
+      where d.workspace_id = b.workspace_id and d.body_hash = b.body_hash)
+    and not exists (select 1 from supabash.revision_entries e
+      where e.workspace_id = b.workspace_id and e.body_hash = b.body_hash
+        and not (e.revision_id = any(v_revisions)
+          and coalesce(e.path = any(p_paths) or e.body_hash = any(p_body_hashes), false)))
+    and not exists (select 1 from supabash.document_versions e
+      join supabash.workspace_revisions r on r.workspace_id = e.workspace_id
+        and r.storage_sequence >= e.valid_from
+        and (e.valid_until is null or r.storage_sequence < e.valid_until)
+      where e.workspace_id = b.workspace_id and e.body_hash = b.body_hash
+        and (r.storage_sequence >= v_cutoff
+          or not coalesce(e.path = any(p_paths) or e.body_hash = any(p_body_hashes), false)));
+
+  if not coalesce(p_dry_run, false) then
     insert into supabash.bodies(workspace_id, body_hash, body, byte_size)
     values(p_workspace_id, v_tombstone, '', 0) on conflict do nothing;
 
@@ -1196,29 +1221,12 @@ begin
       and not exists (select 1 from supabash.workspace_revisions r
         where r.workspace_id = e.workspace_id and r.storage_sequence >= e.valid_from
           and r.storage_sequence < e.valid_until);
-    select coalesce(array_agg(b.body_hash order by b.body_hash), '{}'), coalesce(sum(b.byte_size), 0)
-    into v_deleted, v_bytes from supabash.bodies b
-    where b.workspace_id = p_workspace_id and b.body_hash = any(v_hashes) and b.body_hash <> v_tombstone
-      and not exists (select 1 from supabash.current_documents d
-        where d.workspace_id = b.workspace_id and d.body_hash = b.body_hash)
-      and not exists (select 1 from supabash.revision_entries e
-        where e.workspace_id = b.workspace_id and e.body_hash = b.body_hash)
-      and not exists (select 1 from supabash.document_versions e
-        join supabash.workspace_revisions r on r.workspace_id = e.workspace_id
-          and r.storage_sequence >= e.valid_from
-          and (e.valid_until is null or r.storage_sequence < e.valid_until)
-        where e.workspace_id = b.workspace_id and e.body_hash = b.body_hash);
     delete from supabash.bodies where workspace_id = p_workspace_id and body_hash = any(v_deleted);
     insert into supabash.redactions(workspace_id, redaction_id, at_revision, boundary_sequence, paths, reason)
     values(p_workspace_id, v_id, v_boundary, v_cutoff, v_paths, p_reason);
-    v_result := jsonb_build_object('redactionId', v_id, 'revisions', v_revisions,
-      'bodies', v_deleted, 'bytes', v_bytes, 'dryRun', coalesce(p_dry_run, false));
-    if coalesce(p_dry_run, false) then
-      raise exception using errcode = 'PZ001', message = 'redaction dry run rollback';
-    end if;
-  exception when sqlstate 'PZ001' then null;
-  end;
-  return v_result;
+  end if;
+  return jsonb_build_object('redactionId', v_id, 'revisions', v_revisions,
+    'bodies', v_deleted, 'bytes', v_bytes, 'dryRun', coalesce(p_dry_run, false));
 end
 $function$;
 

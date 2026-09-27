@@ -569,10 +569,13 @@ revoke all on all tables in schema supabash from public, anon, authenticated, se
 grant select on supabash.settings to supabash_api;
 grant select, insert, update, delete on supabash.workspaces to supabash_api;
 grant select, insert, delete on supabash.workspace_revisions to supabash_api;
+-- Redaction may scrub context, but revision identity and causal order stay immutable.
+grant update (metadata, cause) on supabash.workspace_revisions to supabash_api;
 grant select, insert, delete on supabash.bodies to supabash_api;
 grant select, insert, update, delete on supabash.current_documents to supabash_api;
 grant select, insert, update, delete on supabash.revision_entries to supabash_api;
 grant select, insert, delete on supabash.revision_changes to supabash_api;
+grant update (change) on supabash.revision_changes to supabash_api;
 grant select, insert, delete on supabash.checkpoints to supabash_api;
 grant select on supabash.capability_verifiers to supabash_api;
 grant select, insert, delete on supabash.capability_nonces to supabash_api;
